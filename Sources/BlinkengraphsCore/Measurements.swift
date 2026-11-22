@@ -82,9 +82,10 @@ public struct Measurements: Sendable {
 
     /// Returns whether the Link changed.
     @discardableResult
-    public mutating func setPath(link: Link, up: Bool, viaVPN: Bool) -> Bool {
+    public mutating func setPath(link: Link, up: Bool, viaVPN: Bool, at t: Double? = nil) -> Bool {
         pathUp = up
         self.viaVPN = viaVPN
+        if let t { history.route(at: Int(t.rounded(.down)), link: up ? link : nil) }
         guard link != self.link else { return false }
         self.link = link
         denied = []
@@ -175,6 +176,13 @@ public struct Measurements: Sendable {
     public mutating func setPublicAddress(_ readings: [IPFamily: PublicAddressReading], lookedUpOn link: Link) {
         if link == self.link { publicAddress = readings }
     }
+
+    /// Still measuring, with nothing else recorded since the last save: so a kill's Pause
+    /// begins here, not at the last result (decision 3 in docs/plan-spec-5.md).
+    public mutating func mark(at t: Double) { history.mark(at: Int(t.rounded(.down))) }
+
+    /// What changed since the last call, for storage.
+    public mutating func takeUnsaved() -> [HistoryRecord] { history.takeUnsaved() }
 
     /// Writes the Archive Rows whose steps have ended, and applies retention.
     public mutating func advance(now: Double) {

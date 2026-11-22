@@ -140,6 +140,11 @@ public struct Row: Equatable, Sendable, Codable {
         for _ in 0..<n { sketch.add(max) }
     }
 
+    /// A Row as storage keeps it.
+    public init(n: Int, lost: Int, sum: Double, min: Double, max: Double, sketch: Sketch) {
+        self.n = n; self.lost = lost; self.sum = sum; self.min = min; self.max = max; self.sketch = sketch
+    }
+
     /// A Row of `values` in arrival order, which `sum` adds in; nil is a lost Probe.
     public init(values: [Double?]) {
         for v in values { record(v) }

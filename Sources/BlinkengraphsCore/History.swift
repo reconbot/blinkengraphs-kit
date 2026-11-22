@@ -7,6 +7,28 @@ public struct HistoryKey: Hashable, Codable, Sendable {
     public init(link: Link, probe: Probe) { self.link = link; self.probe = probe }
 }
 
+/// One change to History, as storage keeps it: replaying every record restores the History.
+public enum HistoryRecord: Equatable, Sendable {
+    case result(HistoryKey, RawResult)
+    case pause(Pause)
+    /// Measuring at `at`, with nothing else to record: a kill's Pause begins after the newest record.
+    case mark(at: Int)
+    /// The Link carrying the default route from `at`; nil while there is no network path.
+    case route(at: Int, link: Link?)
+    case row(level: Int, key: HistoryKey, m: Int, row: Row)
+    case paused(level: Int, m: Int, seconds: Double)
+    /// Every step of `level` before `next` is written.
+    case written(level: Int, next: Int)
+
+    /// Whether it belongs with the Archives, kept as long as they are, rather than with Raw.
+    public var isArchive: Bool {
+        switch self {
+        case .result, .mark, .route: false
+        case .pause, .row, .paused, .written: true
+        }
+    }
+}
+
 /// Raw, Pauses and Archives for every key. Rows are written by `advance(now:)`, once each, and
 /// never changed. Storage on disk is the app's; this is the model it saves and restores.
 public struct History: Sendable {
@@ -29,6 +51,12 @@ public struct History: Sendable {
     public private(set) var paused: [[Int: Double]]
     /// Per level: the first step not yet written. Nil until anything is recorded.
     public private(set) var next: [Int?]
+    /// When the default-route Link changed, for graph markers; nil Link while no path.
+    public private(set) var routes: [(at: Int, link: Link?)] = []
+    /// Records since the last `takeUnsaved()`, for storage.
+    public private(set) var unsaved: [HistoryRecord] = []
+    private var journaling = true
+    private var newest: Int?
 
     public init(defaults: Defaults) {
         self.init(levels: defaults.history.archives.map { Level(step: $0.stepS, rows: $0.rows) },
@@ -49,14 +77,15 @@ public struct History: Sendable {
 
     /// Every record kind counts: the kill Pause begins after the newest of them.
     public var newestAt: Int? {
-        let r = raw.values.compactMap { $0.last?.at }.max()
         let p = pauses.last.map { Int($0.end.rounded(.down)) }
-        return [r, p].compactMap { $0 }.max()
+        return [newest, p].compactMap { $0 }.max()
     }
 
     public mutating func record(_ key: HistoryKey, _ result: RawResult) {
         raw[key, default: []].append(result)
         start(at: result.at)
+        seen(result.at)
+        log(.result(key, result))
     }
 
     public mutating func add(_ pause: Pause) {
@@ -64,7 +93,74 @@ public struct History: Sendable {
         pauses.append(pause)
         pauses.sort { $0.begin < $1.begin }
         start(at: Int(pause.begin.rounded(.down)))
+        log(.pause(pause))
     }
+
+    /// Still measuring at `at`, though nothing else was recorded.
+    public mutating func mark(at: Int) {
+        seen(at)
+        log(.mark(at: at))
+    }
+
+    /// The default-route Link changed at `at`.
+    public mutating func route(at: Int, link: Link?) {
+        guard routes.last.map({ $0.link != link }) ?? true else { return }
+        routes.append((at, link))
+        seen(at)
+        log(.route(at: at, link: link))
+    }
+
+    /// The records since the last call, which storage then holds.
+    public mutating func takeUnsaved() -> [HistoryRecord] {
+        defer { unsaved = [] }
+        return unsaved
+    }
+
+    /// Restores what storage held, in the order it was written. Nothing replayed is unsaved.
+    public mutating func replay(_ records: [HistoryRecord]) {
+        journaling = false
+        defer { journaling = true }
+        for r in records {
+            switch r {
+            case .result(let key, let result): record(key, result)
+            case .pause(let p): add(p)
+            case .mark(let at): mark(at: at)
+            case .route(let at, let link): route(at: at, link: link)
+            case .row(let level, let key, let m, let row):
+                guard levels.indices.contains(level) else { continue }
+                start(at: m)
+                archives[level][key, default: Archive(step: levels[level].step)].set(m, row)
+            case .paused(let level, let m, let seconds):
+                guard levels.indices.contains(level) else { continue }
+                paused[level][m] = seconds
+            case .written(let level, let n):
+                guard levels.indices.contains(level) else { continue }
+                next[level] = max(next[level] ?? n, n)
+            }
+        }
+    }
+
+    /// Everything the Archives hold, as records: what storage rewrites when it compacts.
+    public var archiveRecords: [HistoryRecord] {
+        var out = pauses.map(HistoryRecord.pause)
+        for (i, level) in archives.enumerated() {
+            for (key, archive) in level {
+                for m in archive.rows.keys.sorted() { out.append(.row(level: i, key: key, m: m, row: archive.rows[m]!)) }
+            }
+            for m in paused[i].keys.sorted() { out.append(.paused(level: i, m: m, seconds: paused[i][m]!)) }
+            if let n = next[i] { out.append(.written(level: i, next: n)) }
+        }
+        return out
+    }
+
+    /// Raw records older than this are gone from Raw, and A1 has written them.
+    public func rawCutoff(now: Int) -> Int {
+        min(now - rawSeconds, (next.first.flatMap { $0 } ?? Int.min) - 1)
+    }
+
+    private mutating func seen(_ at: Int) { newest = max(newest ?? at, at) }
+
+    private mutating func log(_ r: HistoryRecord) { if journaling { unsaved.append(r) } }
 
     /// Writes every Row and Paused second whose step has ended, lowest Archive first, then
     /// applies retention. Writing comes before pruning, so a long absence loses nothing that an
@@ -87,6 +183,7 @@ public struct History: Sendable {
                         // By `at`, then arrival order: the order `sum` adds in.
                         let row = Row(values: values.sorted { ($0.at, $0.order) < ($1.at, $1.order) }.map(\.rtt))
                         archives[i][key, default: Archive(step: s)].set(m, row)
+                        log(.row(level: i, key: key, m: m, row: row))
                     }
                 }
             } else {
@@ -96,7 +193,9 @@ public struct History: Sendable {
                         groups[Archive.floor(m, s), default: []].append((m, row))
                     }
                     for (m, rows) in groups {
-                        archives[i][key, default: Archive(step: s)].set(m, Row.merge(rows.sorted { $0.m < $1.m }.map(\.row)))
+                        let row = Row.merge(rows.sorted { $0.m < $1.m }.map(\.row))
+                        archives[i][key, default: Archive(step: s)].set(m, row)
+                        log(.row(level: i, key: key, m: m, row: row))
                     }
                 }
             }
@@ -109,12 +208,16 @@ public struct History: Sendable {
                 while Double(m) < p.end && m < to {
                     if Archive.kept(m, step: s, rows: level.rows, now: now) {
                         let secs = Pause.seconds(in: pauses, from: Double(m), to: Double(m + s))
-                        if secs > 0 { paused[i][m] = secs }
+                        if secs > 0 {
+                            paused[i][m] = secs
+                            log(.paused(level: i, m: m, seconds: secs))
+                        }
                     }
                     m += s
                 }
             }
             next[i] = to
+            log(.written(level: i, next: to))
         }
         prune(now: now)
     }
@@ -125,8 +228,8 @@ public struct History: Sendable {
             paused[i] = paused[i].filter { Archive.kept($0.key, step: level.step, rows: level.rows, now: now) }
         }
         // Raw keeps `at > now − raw_s`, but never drops what A1 hasn't written yet.
-        let a1 = next.first.flatMap { $0 } ?? Int.min
-        let cutoff = min(now - rawSeconds, a1 - 1)
+        let cutoff = rawCutoff(now: now)
+        if let keep = routes.lastIndex(where: { $0.at <= cutoff }), keep > 0 { routes.removeFirst(keep) }
         for key in raw.keys {
             let results = raw[key]!
             if let first = results.firstIndex(where: { $0.at > cutoff }) {
