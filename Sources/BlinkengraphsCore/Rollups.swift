@@ -59,6 +59,16 @@ public struct Rollups: Sendable {
         return take { _ in true }
     }
 
+    /// When measuring pauses but the app may resume (iOS backgrounding): writes the minutes that
+    /// ended by `now`, which can get no more results once no round is running. The open minute
+    /// stays pending, so a quick return doesn't split it into a written part and a RAM part.
+    public mutating func flushEnded(at now: Double) -> [StoredMinute] {
+        let through = (now / 60).rounded(.down) * 60
+        guard through > writtenThrough else { return [] }
+        writtenThrough = through
+        return take { Double($0 * 60) < through }
+    }
+
     /// A Minute read back from storage.
     public mutating func insert(_ stored: StoredMinute) {
         guard newest == -.infinity || stored.minute >= Int((newest / 60).rounded(.down)) - keepMinutes else { return }

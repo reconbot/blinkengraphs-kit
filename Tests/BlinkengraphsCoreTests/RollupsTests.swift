@@ -68,3 +68,18 @@ private let cell = Link(interface: "pdp_ip0", gateway: nil)
     #expect(r.flush().isEmpty)
     #expect(r.minutes(icmp, on: wifi, from: 0, before: 60).map(\.data) == [stored])
 }
+
+@Test func pausingWritesOnlyMinutesThatHaveEnded() {
+    var r = Rollups(keepDays: 7, maxTimeoutMs: 1000)
+    _ = r.record(icmp, ProbeResult(at: 10, rttMs: 1), on: wifi)
+    // Within the grace, so minute 0 is still pending.
+    _ = r.record(icmp, ProbeResult(at: 61, rttMs: 2), on: wifi)
+    // Paused at 62 s: minute 0 has ended; minute 60 is still open and stays pending.
+    #expect(r.flushEnded(at: 62).map(\.minute) == [0])
+    #expect(r.writtenThrough == 60)
+    _ = r.record(icmp, ProbeResult(at: 80, rttMs: 3), on: wifi)
+    let later = r.record(icmp, ProbeResult(at: 122, rttMs: 4), on: wifi)
+    var minute = Minute()
+    minute.record(2); minute.record(3)
+    #expect(later.map(\.minute) == [1] && later.first?.data == minute)
+}
