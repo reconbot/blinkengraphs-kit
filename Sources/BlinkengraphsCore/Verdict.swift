@@ -22,7 +22,7 @@ public struct Probe: Codable, Hashable, Sendable {
 public enum FaultDomain: String, Codable, Sendable {
     case localLoad = "LocalLoad", lan = "Lan", isp = "Isp", dns = "Dns", remote = "Remote"
     case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", offline = "Offline", vpn = "Vpn"
-    case clear = "Clear"
+    case captivePortal = "CaptivePortal", clear = "Clear"
 }
 
 /// Declared most severe first; `Comparable` sorts in that order.
@@ -59,15 +59,18 @@ public struct VerdictInput: Codable, Sendable {
     public var pathUp: Bool
     /// Whether the traffic goes through a VPN tunnel; absent in a vector means false.
     public var viaVPN: Bool
+    /// Whether a sign-in page holds back the internet; absent in a vector means false.
+    public var captivePortal: Bool
 
     public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0,
-                pathUp: Bool = true, viaVPN: Bool = false) {
+                pathUp: Bool = true, viaVPN: Bool = false, captivePortal: Bool = false) {
         self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps
-        self.pathUp = pathUp; self.viaVPN = viaVPN
+        self.pathUp = pathUp; self.viaVPN = viaVPN; self.captivePortal = captivePortal
     }
 
     enum CodingKeys: String, CodingKey {
         case probes, sample, uploadPeakBps = "upload_peak_bps", pathUp = "path_up", viaVPN = "via_vpn"
+        case captivePortal = "captive_portal"
     }
 
     public init(from decoder: Decoder) throws {
@@ -77,6 +80,7 @@ public struct VerdictInput: Codable, Sendable {
         uploadPeakBps = try c.decode(Double.self, forKey: .uploadPeakBps)
         pathUp = try c.decodeIfPresent(Bool.self, forKey: .pathUp) ?? true
         viaVPN = try c.decodeIfPresent(Bool.self, forKey: .viaVPN) ?? false
+        captivePortal = try c.decodeIfPresent(Bool.self, forKey: .captivePortal) ?? false
     }
 }
 
@@ -91,7 +95,8 @@ public enum Verdict {
             let network = networkFindings(input)
             // Rule 1 stops every other network rule, the DNS rule included (vector lan-down).
             let lanDown = network.first?.domain == .lan && network.first?.severity == .crit
-            findings = network + (lanDown ? [] : dnsFindings(input))
+            // A portal hijacks DNS too, so the DNS rule doesn't run behind one.
+            findings = network + (lanDown || input.captivePortal ? [] : dnsFindings(input))
         }
         findings += localFindings(input.sample)
         if findings.isEmpty { return [Finding(domain: .clear, severity: .ok, headline: "All clear")] }
@@ -122,6 +127,10 @@ public enum Verdict {
         // 2
         if let g = gatewayLoss, g >= 0.05 {
             out.append(Finding(domain: .lan, severity: .warn, headline: "Local network unstable: gateway losing \(pct(g))"))
+        }
+        // A sign-in page explains Internet loss; the family rules and rules 3–7 don't run.
+        if input.captivePortal {
+            return out + [Finding(domain: .captivePortal, severity: .warn, headline: "Sign-in page is blocking the internet")]
         }
         // One address family down while the other works: say so, then judge only the working one,
         // so a broken IPv6 path never reads as a remote host's problem.

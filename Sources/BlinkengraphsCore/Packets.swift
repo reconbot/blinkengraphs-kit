@@ -61,20 +61,65 @@ public enum ICMP {
     }
 }
 
-/// DNS over UDP (RFC 1035): one A query, and just enough of the answer to time it.
+/// DNS over UDP (RFC 1035): one query, just enough of the answer to time it, and TXT answers
+/// for the Public Address lookup.
 public enum DNS {
+    public static let a: UInt16 = 1
+    public static let txt: UInt16 = 16
+
     public struct Response: Equatable, Sendable {
         public var rcode: UInt8
         public init(rcode: UInt8) { self.rcode = rcode }
     }
 
-    public static func query(id: UInt16, name: String) -> [UInt8] {
+    public static func query(id: UInt16, name: String, type: UInt16 = a) -> [UInt8] {
         var q: [UInt8] = [UInt8(id >> 8), UInt8(id & 0xff), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]
         for label in name.split(separator: ".") {
             q.append(UInt8(label.utf8.count))
             q += label.utf8
         }
-        return q + [0, 0, 1, 0, 1] // root, type A, class IN
+        return q + [0, UInt8(type >> 8), UInt8(type & 0xff), 0, 1] // root, type, class IN
+    }
+
+    /// The strings of every TXT answer in a response to query `id`, in order; nil when the bytes
+    /// aren't such a response or are cut short.
+    public static func txtRecords(_ bytes: [UInt8], id: UInt16) -> [String]? {
+        guard bytes.count >= 12, be16(bytes[...], 0) == id, bytes[2] & 0x80 != 0 else { return nil }
+        let questions = Int(be16(bytes[...], 4)), answers = Int(be16(bytes[...], 6))
+        var i = 12
+        /// Skips a name: labels, ending at the root or at a compression pointer.
+        func skipName() -> Bool {
+            while i < bytes.count {
+                let len = Int(bytes[i])
+                if len == 0 { i += 1; return true }
+                if len & 0xC0 == 0xC0 { i += 2; return i <= bytes.count }
+                i += 1 + len
+            }
+            return false
+        }
+        for _ in 0..<questions {
+            guard skipName(), i + 4 <= bytes.count else { return nil }
+            i += 4
+        }
+        var out: [String] = []
+        for _ in 0..<answers {
+            guard skipName(), i + 10 <= bytes.count else { return nil }
+            let type = be16(bytes[...], i)
+            let length = Int(be16(bytes[...], i + 8))
+            i += 10
+            guard i + length <= bytes.count else { return nil }
+            if type == txt {
+                var j = i
+                while j < i + length {
+                    let n = Int(bytes[j])
+                    guard j + 1 + n <= i + length else { return nil }
+                    out.append(String(decoding: bytes[(j + 1)..<(j + 1 + n)], as: UTF8.self))
+                    j += 1 + n
+                }
+            }
+            i += length
+        }
+        return out
     }
 
     /// Nil unless `bytes` is a response to query `id`. Any rcode counts as an answer:

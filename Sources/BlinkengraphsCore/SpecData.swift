@@ -3,21 +3,46 @@
 import Foundation
 
 public struct Defaults: Decodable, Sendable {
-    public struct Target: Decodable, Sendable {
+    /// One row of a Probe Group: a Target and what to measure on it (CONTEXT.md "Probe Group").
+    public struct Target: Codable, Equatable, Hashable, Sendable {
         public var target: String
         public var icmp: Bool
         public var dns: Bool
         public var trace: Bool
         public var tcp: Int?
         public var udp: Int?
+
+        public init(target: String, icmp: Bool, dns: Bool, trace: Bool, tcp: Int?, udp: Int?) {
+            self.target = target; self.icmp = icmp; self.dns = dns; self.trace = trace; self.tcp = tcp; self.udp = udp
+        }
+
+        /// `gateway`, `system-dns`, an IPv4 or IPv6 address, or a host name (RFC 1123 labels).
+        public static func isValid(_ text: String) -> Bool {
+            if text == Probe.gateway || text == Probe.systemDNS || PublicAddress.canonical(text) != nil { return true }
+            let labels = text.split(separator: ".", omittingEmptySubsequences: false)
+            guard text.count <= 253, !labels.isEmpty, labels.allSatisfy({ !$0.isEmpty && $0.count <= 63 }) else { return false }
+            // An all-numeric name would be a malformed address, not a host.
+            guard labels.contains(where: { $0.contains { !$0.isNumber } }) else { return false }
+            return labels.allSatisfy { label in
+                label.allSatisfy { ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" }
+                    && label.first != "-" && label.last != "-"
+            }
+        }
+
+        /// The Gateway and the system resolver have no route to trace.
+        public var traceable: Bool { target != Probe.gateway && target != Probe.systemDNS }
     }
 
-    public struct ProbeGroup: Decodable, Sendable {
+    public struct ProbeGroup: Codable, Equatable, Sendable {
         public var name: String
         public var targets: [Target]
         public var latencyMs: Int
         public var dnsMs: Int
         public var traceMs: Int
+
+        public init(name: String, targets: [Target], latencyMs: Int, dnsMs: Int, traceMs: Int) {
+            self.name = name; self.targets = targets; self.latencyMs = latencyMs; self.dnsMs = dnsMs; self.traceMs = traceMs
+        }
 
         enum CodingKeys: String, CodingKey {
             case name, targets, latencyMs = "latency_ms", dnsMs = "dns_ms", traceMs = "trace_ms"
@@ -53,6 +78,17 @@ public struct Defaults: Decodable, Sendable {
         }
     }
 
+    /// spec rules/public-address.md
+    public struct PublicAddressDefaults: Decodable, Sendable {
+        public var dnsName: String
+        public var dnsServer: String
+        public var httpsURL: String
+        public var refreshS: Int
+        enum CodingKeys: String, CodingKey {
+            case dnsName = "dns_name", dnsServer = "dns_server", httpsURL = "https_url", refreshS = "refresh_s"
+        }
+    }
+
     public var probeGroup: ProbeGroup
     public var history: History
     public var hopTrace: HopTraceDefaults
@@ -64,11 +100,15 @@ public struct Defaults: Decodable, Sendable {
     public var graphAggregate: Aggregate
     /// What a Probe's latency readout shows until the user picks one (rules/probe-stats.md, "Readouts").
     public var readoutAggregate: Aggregate
+    /// Plain HTTP on purpose: a portal can intercept it (rules/verdict.md, "Captive Portal").
+    public var captivePortalURL: String
+    public var publicAddress: PublicAddressDefaults
 
     enum CodingKeys: String, CodingKey {
         case probeGroup = "probe_group", history, hopTrace = "hop_trace"
         case maxTimeoutMs = "max_timeout_ms", dnsQueryName = "dns_query_name", appearance
         case graphAggregate = "graph_aggregate", readoutAggregate = "readout_aggregate"
+        case captivePortalURL = "captive_portal_url", publicAddress = "public_address"
     }
 
     /// The spec's shared defaults with this platform's `defaults.override.json` merged over them.

@@ -11,6 +11,8 @@ import BlinkengraphsCore
     #expect(d.graphAggregate == .p95)
     #expect(d.readoutAggregate == .p50)
     #expect(d.history.rollupDays == 7)
+    #expect(d.captivePortalURL == "http://cp.cloudflare.com/generate_204")
+    #expect(d.publicAddress.dnsServer == "ns3.cloudflare.com" && d.publicAddress.refreshS == 300)
     #expect(d.probeGroup.probes.contains(Probe(target: "1.1.1.1", protocol: "tcp:443")))
 }
 

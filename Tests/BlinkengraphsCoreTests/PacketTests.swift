@@ -74,3 +74,23 @@ private func ipv6Header() -> [UInt8] { [0x60] + [UInt8](repeating: 0, count: 39)
     #expect(ICMP6.parse([3, 0, 0, 0, 0, 0, 0, 0, 0x60]) == nil)
     #expect(ICMP6.parse([135, 0, 0, 0, 0, 0, 0, 0]) == nil) // neighbour solicitation
 }
+
+@Test func txtQueryAsksForTypeTXT() {
+    let q = DNS.query(id: 0x0102, name: "whoami.cloudflare.com", type: DNS.txt)
+    #expect(Array(q.suffix(4)) == [0, 16, 0, 1])
+}
+
+@Test func txtAnswersAreReadThroughNameCompression() {
+    // Response to the query above: header, the question, then two TXT answers whose names
+    // point back at the question (0xC00C), the second with two strings.
+    var r = DNS.query(id: 0x0102, name: "whoami.cloudflare.com", type: DNS.txt)
+    r[2] = 0x81; r[3] = 0x80; r[7] = 2
+    func txt(_ strings: [String]) -> [UInt8] {
+        let rdata = strings.flatMap { [UInt8($0.utf8.count)] + Array($0.utf8) }
+        return [0xC0, 0x0C, 0, 16, 0, 1, 0, 0, 0, 0, 0, UInt8(rdata.count)] + rdata
+    }
+    r += txt(["remote_ip: 203.0.113.7"]) + txt(["asn: 64500", "country_code: US"])
+    #expect(DNS.txtRecords(r, id: 0x0102) == ["remote_ip: 203.0.113.7", "asn: 64500", "country_code: US"])
+    #expect(DNS.txtRecords(r, id: 0x0103) == nil)
+    #expect(DNS.txtRecords(Array(r.prefix(40)), id: 0x0102) == nil)
+}
