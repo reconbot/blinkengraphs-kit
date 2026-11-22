@@ -66,7 +66,7 @@ public enum Report {
             let name = r.names[a].flatMap { redact ? red.name($0, of: a) : $0 }
             return name.map { "\($0) (\(addr(a)))" } ?? addr(a)
         }
-        func ms(_ v: Double?) -> String { v.map { String(format: "%.1f", $0) } ?? "-" }
+        func ms(_ v: Double?) -> String { v.map(RTT.display) ?? "-" }
         func pct(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
         func pad(_ s: String, _ n: Int) -> String { s.count >= n ? s : s + String(repeating: " ", count: n - s.count) }
         func right(_ s: String, _ n: Int) -> String { s.count >= n ? s : String(repeating: " ", count: n - s.count) + s }

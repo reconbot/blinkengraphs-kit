@@ -28,7 +28,7 @@ public struct PublicAddressReading: Codable, Equatable, Sendable {
 }
 
 public enum PublicAddress {
-    /// `dnsTXT` is the TXT strings of the whoami answer and `httpsBody` the checkip body; nil when
+    /// `dnsTXT` is the TXT strings of the whoami answer and `httpsBody` the icanhazip body; nil when
     /// that lookup failed.
     public static func read(family: IPFamily, dnsTXT: [String]?, httpsBody: String?) -> PublicAddressReading {
         let fields = (dnsTXT ?? []).compactMap { line -> (String, String)? in

@@ -82,11 +82,15 @@ public struct Defaults: Decodable, Sendable {
     public struct PublicAddressDefaults: Decodable, Sendable {
         public var dnsName: String
         public var dnsServer: String
-        public var httpsURL: String
+        /// One URL per IP version; each host has addresses of that version only, so DNS picks it.
+        public var httpsURLIPv4: String
+        public var httpsURLIPv6: String
         public var refreshS: Int
         enum CodingKeys: String, CodingKey {
-            case dnsName = "dns_name", dnsServer = "dns_server", httpsURL = "https_url", refreshS = "refresh_s"
+            case dnsName = "dns_name", dnsServer = "dns_server", httpsURLIPv4 = "https_url_ipv4",
+                 httpsURLIPv6 = "https_url_ipv6", refreshS = "refresh_s"
         }
+        public func httpsURL(_ family: IPFamily) -> String { family == .ipv6 ? httpsURLIPv6 : httpsURLIPv4 }
     }
 
     public var probeGroup: ProbeGroup

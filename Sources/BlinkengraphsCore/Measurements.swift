@@ -80,7 +80,7 @@ public struct Measurements: Sendable {
             return nil
         }
         if link == self.link { denied.remove(probe) }
-        let result = ProbeResult(at: at, rttMs: rtt)
+        let result = ProbeResult(at: at, rttMs: rtt.map(RTT.recorded))
         histories.record(probe, result, on: link)
         return result
     }
@@ -99,7 +99,10 @@ public struct Measurements: Sendable {
         var trace = traces[link]?[target] ?? HopTrace(hopWindow: defaults.hopTrace.hopWindow)
         // Highest TTL first: past the Target every TTL is `reached`, and the lowest reached one,
         // recorded last, prunes the rows above it.
-        for r in results.sorted(by: { $0.ttl > $1.ttl }) { trace.record(r) }
+        for var r in results.sorted(by: { $0.ttl > $1.ttl }) {
+            r.rttMs = r.rttMs.map(RTT.recorded)
+            trace.record(r)
+        }
         traces[link, default: [:]][target] = trace
     }
 
