@@ -89,3 +89,30 @@ private func be16(_ b: ArraySlice<UInt8>, _ offset: Int) -> UInt16 {
     let i = b.startIndex + offset
     return UInt16(b[i]) << 8 | UInt16(b[i + 1])
 }
+
+/// ICMPv6 echo (RFC 4443). Datagram ICMPv6 sockets carry no IPv6 header in either direction,
+/// and the kernel computes the checksum over the pseudo-header.
+public enum ICMP6 {
+    public static func echoRequest(identifier: UInt16, sequence: UInt16, payload: [UInt8]) -> [UInt8] {
+        [128, 0, 0, 0, UInt8(identifier >> 8), UInt8(identifier & 0xff),
+         UInt8(sequence >> 8), UInt8(sequence & 0xff)] + payload
+    }
+
+    public static func parse(_ bytes: [UInt8]) -> ICMP.Reply? {
+        let b = bytes[...]
+        guard b.count >= 8 else { return nil }
+        switch b[b.startIndex] {
+        case 129:
+            return ICMP.Reply(kind: .echoReply, sequence: be16(b, 6))
+        case 3, 1:
+            // The error quotes our IPv6 header (40 bytes) and the start of our echo request.
+            let quoted = b.dropFirst(8)
+            guard quoted.count >= 40 + 8, quoted[quoted.startIndex] >> 4 == 6 else { return nil }
+            let echo = quoted.dropFirst(40)
+            guard echo[echo.startIndex] == 128 else { return nil }
+            return ICMP.Reply(kind: b[b.startIndex] == 3 ? .timeExceeded : .unreachable, sequence: be16(echo, 6))
+        default:
+            return nil
+        }
+    }
+}

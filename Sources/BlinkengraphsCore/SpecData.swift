@@ -42,8 +42,11 @@ public struct Defaults: Decodable, Sendable {
         public var maxTtl: Int
         public var hopWindow: Int
         public var fullSweepEveryS: Int
+        /// Show Hop names from reverse DNS (rules/hop-trace.md, "Names").
+        public var reverseDns: Bool
         enum CodingKeys: String, CodingKey {
             case maxTtl = "max_ttl", hopWindow = "hop_window", fullSweepEveryS = "full_sweep_every_s"
+            case reverseDns = "reverse_dns"
         }
     }
 

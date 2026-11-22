@@ -53,3 +53,24 @@ private func ipv4(from src: [UInt8], _ body: [UInt8]) -> [UInt8] {
     #expect(DNS.parseResponse(r, id: 0xbeef) == DNS.Response(rcode: 3))
     #expect(DNS.parseResponse(DNS.query(id: 0xbeef, name: "a.b"), id: 0xbeef) == nil) // a query, not a response
 }
+
+// ICMPv6 (RFC 4443). Datagram ICMPv6 sockets deliver no IPv6 header and the kernel fills the checksum.
+@Test func icmp6EchoRequestLayout() {
+    let pkt = ICMP6.echoRequest(identifier: 0x1234, sequence: 7, payload: [1, 2])
+    #expect(pkt == [128, 0, 0, 0, 0x12, 0x34, 0, 7, 1, 2])
+}
+
+/// An IPv6 header (40 bytes) quoted inside an ICMPv6 error.
+private func ipv6Header() -> [UInt8] { [0x60] + [UInt8](repeating: 0, count: 39) }
+
+@Test func icmp6RepliesCarryTheSequence() {
+    var reply = ICMP6.echoRequest(identifier: 1, sequence: 42, payload: [])
+    reply[0] = 129
+    #expect(ICMP6.parse(reply) == ICMP.Reply(kind: .echoReply, sequence: 42))
+
+    let quoted = ipv6Header() + ICMP6.echoRequest(identifier: 1, sequence: 9, payload: [])
+    #expect(ICMP6.parse([3, 0, 0, 0, 0, 0, 0, 0] + quoted) == ICMP.Reply(kind: .timeExceeded, sequence: 9))
+    #expect(ICMP6.parse([1, 4, 0, 0, 0, 0, 0, 0] + quoted) == ICMP.Reply(kind: .unreachable, sequence: 9))
+    #expect(ICMP6.parse([3, 0, 0, 0, 0, 0, 0, 0, 0x60]) == nil)
+    #expect(ICMP6.parse([135, 0, 0, 0, 0, 0, 0, 0]) == nil) // neighbour solicitation
+}

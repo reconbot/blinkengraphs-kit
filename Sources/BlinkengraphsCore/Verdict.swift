@@ -10,11 +10,19 @@ public struct Probe: Codable, Hashable, Sendable {
     public var `protocol`: String
 
     public init(target: String, protocol: String) { self.target = target; self.protocol = `protocol` }
+
+    /// The Target's IP version, when it is an address literal. Names like `gateway` have none.
+    public var isIPv6: Bool? {
+        if target.contains(":") { return true }
+        let parts = target.split(separator: ".")
+        return parts.count == 4 && parts.allSatisfy { UInt8($0) != nil } ? false : nil
+    }
 }
 
 public enum FaultDomain: String, Codable, Sendable {
     case localLoad = "LocalLoad", lan = "Lan", isp = "Isp", dns = "Dns", remote = "Remote"
-    case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", clear = "Clear"
+    case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", offline = "Offline"
+    case clear = "Clear"
 }
 
 /// Declared most severe first; `Comparable` sorts in that order.
@@ -47,21 +55,40 @@ public struct VerdictInput: Codable, Sendable {
     /// Metric values keyed by the spec's Windows names (`CpuTotal`, `NetUp`…). iOS fills only `NetUp`.
     public var sample: [String: Double]?
     public var uploadPeakBps: Double
+    /// Whether the OS reports any usable network path; absent in a vector means true.
+    public var pathUp: Bool
 
-    public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0) {
-        self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps
+    public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0, pathUp: Bool = true) {
+        self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps; self.pathUp = pathUp
     }
 
-    enum CodingKeys: String, CodingKey { case probes, sample, uploadPeakBps = "upload_peak_bps" }
+    enum CodingKeys: String, CodingKey {
+        case probes, sample, uploadPeakBps = "upload_peak_bps", pathUp = "path_up"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        probes = try c.decode([ProbeStat].self, forKey: .probes)
+        sample = try c.decodeIfPresent([String: Double].self, forKey: .sample)
+        uploadPeakBps = try c.decode(Double.self, forKey: .uploadPeakBps)
+        pathUp = try c.decodeIfPresent(Bool.self, forKey: .pathUp) ?? true
+    }
 }
 
 public enum Verdict {
     /// Findings, most severe first. Never empty.
     public static func evaluate(_ input: VerdictInput) -> [Finding] {
-        let network = networkFindings(input)
-        // Rule 1 stops every other network rule, the DNS rule included (vector lan-down).
-        let lanDown = network.first?.domain == .lan && network.first?.severity == .crit
-        var findings = network + (lanDown ? [] : dnsFindings(input)) + localFindings(input.sample)
+        var findings: [Finding]
+        if !input.pathUp {
+            // With no network path, Offline replaces every network and DNS rule.
+            findings = [Finding(domain: .offline, severity: .crit, headline: "No network connection")]
+        } else {
+            let network = networkFindings(input)
+            // Rule 1 stops every other network rule, the DNS rule included (vector lan-down).
+            let lanDown = network.first?.domain == .lan && network.first?.severity == .crit
+            findings = network + (lanDown ? [] : dnsFindings(input))
+        }
+        findings += localFindings(input.sample)
         if findings.isEmpty { return [Finding(domain: .clear, severity: .ok, headline: "All clear")] }
         // Stable: ties keep rule order.
         findings = findings.enumerated()
@@ -76,7 +103,7 @@ public enum Verdict {
 
     private static func networkFindings(_ input: VerdictInput) -> [Finding] {
         let gateway = input.probes.filter { $0.probe.target == Probe.gateway && counts($0) }
-        let internet = input.probes.filter {
+        var internet = input.probes.filter {
             $0.probe.target != Probe.gateway && $0.probe.target != Probe.systemDNS
                 && $0.probe.protocol != "dns" && counts($0)
         }
@@ -91,6 +118,24 @@ public enum Verdict {
         if let g = gatewayLoss, g >= 0.05 {
             out.append(Finding(domain: .lan, severity: .warn, headline: "Local network unstable: gateway losing \(pct(g))"))
         }
+        // One address family down while the other works: say so, then judge only the working one,
+        // so a broken IPv6 path never reads as a remote host's problem.
+        let v4 = internet.filter { $0.probe.isIPv6 == false }
+        let v6 = internet.filter { $0.probe.isIPv6 == true }
+        func bestLoss(_ ps: [P]) -> Double { ps.map(\.stat.loss).min() ?? 1 }
+        func works(_ ps: [P]) -> Bool { ps.contains { $0.stat.loss < 0.05 } }
+        if !v4.isEmpty && !v6.isEmpty {
+            if bestLoss(v6) >= 0.5 && works(v4) {
+                out.append(Finding(domain: .isp, severity: .warn,
+                                   headline: "IPv6 broken; IPv4 works: ISP or router IPv6 problem"))
+                internet = v4
+            } else if bestLoss(v4) >= 0.5 && works(v6) {
+                out.append(Finding(domain: .isp, severity: .crit,
+                                   headline: "IPv4 broken; IPv6 works: ISP or router IPv4 problem"))
+                internet = v6
+            }
+        }
+
         guard !internet.isEmpty else { return out }
 
         let best = internet.min { $0.stat.loss < $1.stat.loss }!
