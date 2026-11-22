@@ -86,8 +86,10 @@ public enum Report {
 
         out += ["", "Probes  (window: loss, rtt, baseline, jitter in ms)"]
         let all = Set(r.probes.keys).union(r.denied).sorted { ($0.target, $0.protocol) < ($1.target, $1.protocol) }
+        if all.isEmpty { out.append("  paused: no network path") }
+        let probeWidth = (all.map { "\(addr($0.target)) \($0.protocol)".count }.max() ?? 0) + 2
         for p in all {
-            let name = pad("\(addr(p.target)) \(p.protocol)", 34)
+            let name = pad("\(addr(p.target)) \(p.protocol)", probeWidth)
             if r.denied.contains(p) {
                 out.append("  \(name)denied")
             } else if let s = r.probes[p] {
@@ -96,9 +98,12 @@ public enum Report {
         }
 
         for target in r.hops.keys.sorted() {
-            out += ["", "Hop Trace to \(addr(target))", "   #  \(pad("host", 46))loss   last    avg   best  worst"]
-            for h in r.hops[target] ?? [] {
-                let line = "  \(String(format: "%2d", h.ttl))  \(pad(h.addr.map(host) ?? "*", 46))"
+            let rows = r.hops[target] ?? []
+            // Sized to the longest host, so a long reverse-DNS name never runs into the loss column.
+            let width = max(6, (rows.map { $0.addr.map(host)?.count ?? 1 }.max() ?? 0) + 2)
+            out += ["", "Hop Trace to \(addr(target))", "   #  \(pad("host", width))loss   last    avg   best  worst"]
+            for h in rows {
+                let line = "  \(String(format: "%2d", h.ttl))  \(pad(h.addr.map(host) ?? "*", width))"
                     + pad(pct(h.loss), 5) + [h.lastMs, h.avgMs, h.bestMs, h.worstMs].map { right(ms($0), 6) }.joined(separator: " ")
                 out.append(line)
             }

@@ -62,3 +62,17 @@ private func input() -> ReportInput {
     #expect(text.contains("96.246.46.x"))
     #expect(text.contains("redacted"))
 }
+
+@Test func longHostnamesKeepColumnsApart() {
+    var i = input()
+    i.names["96.246.46.1"] = "lo0-100.nycmny-vfttp-369.verizon-gni.net"
+    let line = Report.text(i, redact: false).split(separator: "\n").first { $0.contains("verizon-gni") }!
+    #expect(line.contains("(96.246.46.1)  "), "\(line)")
+}
+
+@Test func noProbesSaysPaused() {
+    var i = input()
+    i.probes = [:]
+    i.denied = []
+    #expect(Report.text(i, redact: false).contains("paused: no network path"))
+}
