@@ -55,10 +55,12 @@ public struct Defaults: Decodable, Sendable {
     public var hopTrace: HopTraceDefaults
     public var maxTimeoutMs: Int
     public var dnsQueryName: String
+    /// The Appearance until the user picks one in Settings.
+    public var appearance: Appearance
 
     enum CodingKeys: String, CodingKey {
         case probeGroup = "probe_group", history, hopTrace = "hop_trace"
-        case maxTimeoutMs = "max_timeout_ms", dnsQueryName = "dns_query_name"
+        case maxTimeoutMs = "max_timeout_ms", dnsQueryName = "dns_query_name", appearance
     }
 
     /// The spec's shared defaults with this platform's `defaults.override.json` merged over them.
@@ -69,6 +71,11 @@ public struct Defaults: Decodable, Sendable {
     }
 
     public func probeTimeoutMs(intervalMs: Int) -> Int { min(intervalMs, maxTimeoutMs) }
+}
+
+/// CONTEXT.md "Appearance": the color set the app draws with. `system` follows the OS.
+public enum Appearance: String, CaseIterable, Codable, Sendable {
+    case system, light, dark
 }
 
 public struct RGB: Equatable, Sendable {

@@ -31,6 +31,11 @@ public struct LinkHistories: Sendable {
         }
     }
 
+    /// Each Probe's kept results on `link`, oldest first; for history graphs.
+    public func results(on link: Link) -> [Probe: [ProbeResult]] {
+        (byLink[link] ?? [:]).mapValues(\.results)
+    }
+
     public func stats(on link: Link, windowSeconds: Double) -> [Probe: ProbeStats] {
         (byLink[link] ?? [:]).mapValues { $0.stats(windowSeconds: windowSeconds) }
     }

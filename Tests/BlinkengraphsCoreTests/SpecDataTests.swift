@@ -7,7 +7,16 @@ import BlinkengraphsCore
     #expect(d.probeGroup.targets.map(\.target) == ["gateway", "1.1.1.1", "9.9.9.9", "2606:4700:4700::1111", "2620:fe::fe", "system-dns"])
     #expect(d.probeTimeoutMs(intervalMs: 1000) == 1000)
     #expect(d.hopTrace.reverseDns)
+    #expect(d.appearance == .system)
     #expect(d.probeGroup.probes.contains(Probe(target: "1.1.1.1", protocol: "tcp:443")))
+}
+
+@Test func lightPaletteSharesTheBasePaths() throws {
+    let base = try Tokens.decode(Spec.file("tokens/blinkengraphs.tokens.json"))
+    let light = try Tokens.decode(Spec.file("tokens/blinkengraphs.light.tokens.json"))
+    for path in ["color.surface.background", "color.surface.text", "color.severity.crit", "color.loss"] {
+        #expect(base.color(path) != nil && light.color(path) != nil && base.color(path) != light.color(path))
+    }
 }
 
 @Test func decodesTokens() throws {
