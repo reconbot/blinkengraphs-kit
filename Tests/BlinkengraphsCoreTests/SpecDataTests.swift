@@ -4,7 +4,7 @@ import BlinkengraphsCore
 @Test func decodesDefaults() throws {
     let d = try Defaults.decode(Spec.file("defaults.json"))
     #expect(d.probeGroup.name == "Default")
-    #expect(d.probeGroup.targets.map(\.target) == ["gateway", "1.1.1.1", "8.8.8.8", "system-dns"])
+    #expect(d.probeGroup.targets.map(\.target) == ["gateway", "1.1.1.1", "9.9.9.9", "system-dns"])
     #expect(d.probeTimeoutMs(intervalMs: 1000) == 1000)
     #expect(d.probeGroup.probes.contains(Probe(target: "1.1.1.1", protocol: "tcp:443")))
 }

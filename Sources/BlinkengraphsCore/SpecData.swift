@@ -1,4 +1,5 @@
 // defaults.json and tokens/*.json, bundled from the pinned spec.
+// rules/defaults.md: platform overrides merge over the shared defaults.
 import Foundation
 
 public struct Defaults: Decodable, Sendable {
@@ -57,7 +58,12 @@ public struct Defaults: Decodable, Sendable {
         case maxTimeoutMs = "max_timeout_ms", dnsQueryName = "dns_query_name"
     }
 
-    public static func decode(_ data: Data) throws -> Defaults { try JSONDecoder().decode(Defaults.self, from: data) }
+    /// The spec's shared defaults with this platform's `defaults.override.json` merged over them.
+    public static func decode(_ shared: Data, override: Data = Data("{}".utf8)) throws -> Defaults {
+        let merged = DefaultsMerge.merge(try JSONSerialization.jsonObject(with: shared),
+                                         try JSONSerialization.jsonObject(with: override))
+        return try JSONDecoder().decode(Defaults.self, from: JSONSerialization.data(withJSONObject: merged))
+    }
 
     public func probeTimeoutMs(intervalMs: Int) -> Int { min(intervalMs, maxTimeoutMs) }
 }
@@ -99,4 +105,15 @@ public struct Tokens: Sendable {
     /// Full dotted path, such as `color.severity.crit` or `threshold.meter-warn`.
     public func color(_ path: String) -> RGB? { colors[path] }
     public func number(_ path: String) -> Double? { numbers[path] }
+}
+
+public enum DefaultsMerge {
+    /// Objects merge key by key, a `null` member removes the key, anything else replaces whole.
+    public static func merge(_ base: Any, _ override: Any) -> Any {
+        guard var b = base as? [String: Any], let o = override as? [String: Any] else { return override }
+        for (k, v) in o {
+            if v is NSNull { b[k] = nil } else { b[k] = merge(b[k] ?? NSNull(), v) }
+        }
+        return b
+    }
 }
