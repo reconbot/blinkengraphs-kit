@@ -9,7 +9,6 @@ enum Spec {
         return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // BlinkengraphsCoreTests
             .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // BlinkengraphsKit
             .deletingLastPathComponent() // repo root
             .appendingPathComponent("spec")
     }()
