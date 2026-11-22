@@ -24,6 +24,12 @@ public struct HopRow: Codable, Equatable, Sendable {
     public var avgMs: Double?
     public var worstMs: Double?
 
+    public init(ttl: Int, addr: String?, sent: Int, loss: Double,
+                lastMs: Double?, bestMs: Double?, avgMs: Double?, worstMs: Double?) {
+        self.ttl = ttl; self.addr = addr; self.sent = sent; self.loss = loss
+        self.lastMs = lastMs; self.bestMs = bestMs; self.avgMs = avgMs; self.worstMs = worstMs
+    }
+
     enum CodingKeys: String, CodingKey {
         case ttl, addr, sent, loss
         case lastMs = "last_ms", bestMs = "best_ms", avgMs = "avg_ms", worstMs = "worst_ms"
