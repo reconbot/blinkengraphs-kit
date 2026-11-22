@@ -1,7 +1,8 @@
+import Foundation
 // rules/graph-aggregate.md. Exact arithmetic only, so results match vectors/sketch bit for bit.
 
 /// What a history graph point shows when it covers several samples.
-public enum Aggregate: String, CaseIterable, Sendable {
+public enum Aggregate: String, CaseIterable, Codable, Sendable {
     case p50, p95, p99, avg, max
 
     /// For raw samples from the recent RAM history: the same rank on the sorted values, no histogram.
@@ -33,6 +34,32 @@ public struct Sketch: Equatable, Sendable {
     public private(set) var counts: [Int: Int] = [:]
 
     public init() {}
+
+    public struct DecodingError: Error {}
+
+    /// The inverse of `encoded`.
+    public init(encoded bytes: [UInt8]) throws {
+        var i = 0
+        func uleb() throws -> Int {
+            var x: UInt64 = 0, shift: UInt64 = 0
+            while true {
+                guard i < bytes.count, shift < 64 else { throw DecodingError() }
+                let byte = bytes[i]
+                i += 1
+                x |= UInt64(byte & 0x7F) << shift
+                if byte & 0x80 == 0 { return Int(x) }
+                shift += 7
+            }
+        }
+        zero = try uleb()
+        var previous = -1
+        while i < bytes.count {
+            let index = previous + 1 + (try uleb())
+            guard index < Self.bucketCount else { throw DecodingError() }
+            counts[index] = try uleb()
+            previous = index
+        }
+    }
 
     /// Bucket index, or nil for the zero bucket (below 2⁻¹⁰, zero and negatives).
     public static func index(_ v: Double) -> Int? {
@@ -96,7 +123,7 @@ public struct Sketch: Equatable, Sendable {
 }
 
 /// One key's per-minute storage.
-public struct Minute: Equatable, Sendable {
+public struct Minute: Equatable, Sendable, Codable {
     public private(set) var n = 0
     public private(set) var lost = 0
     public private(set) var sum = 0.0
@@ -131,6 +158,35 @@ public struct Minute: Equatable, Sendable {
     }
 
     public var loss: Double { n + lost == 0 ? 0 : Double(lost) / Double(n + lost) }
+
+    // JSON has no infinity, so an empty minute leaves out min and max; the sketch travels in
+    // its spec encoding (rules/graph-aggregate.md), base64.
+    enum CodingKeys: String, CodingKey { case n, lost, sum, min, max, sk }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        n = try c.decode(Int.self, forKey: .n)
+        lost = try c.decode(Int.self, forKey: .lost)
+        sum = try c.decode(Double.self, forKey: .sum)
+        min = try c.decodeIfPresent(Double.self, forKey: .min) ?? .infinity
+        max = try c.decodeIfPresent(Double.self, forKey: .max) ?? -.infinity
+        guard let bytes = Data(base64Encoded: try c.decode(String.self, forKey: .sk)) else {
+            throw Sketch.DecodingError()
+        }
+        sketch = try Sketch(encoded: [UInt8](bytes))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(n, forKey: .n)
+        try c.encode(lost, forKey: .lost)
+        try c.encode(sum, forKey: .sum)
+        if n > 0 {
+            try c.encode(min, forKey: .min)
+            try c.encode(max, forKey: .max)
+        }
+        try c.encode(Data(sketch.encoded).base64EncodedString(), forKey: .sk)
+    }
 
     /// Nil when no value was recorded.
     public func value(_ aggregate: Aggregate) -> Double? {

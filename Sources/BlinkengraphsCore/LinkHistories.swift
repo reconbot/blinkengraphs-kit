@@ -3,7 +3,7 @@
 
 /// The Followed Adapter's current attachment: its interface and Gateway.
 /// Two networks whose Gateways share an address are one Link until the Access Point is known.
-public struct Link: Hashable, Sendable {
+public struct Link: Hashable, Sendable, Codable {
     public var interface: String
     public var gateway: String?
 

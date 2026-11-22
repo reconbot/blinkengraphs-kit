@@ -35,7 +35,10 @@ public struct Defaults: Decodable, Sendable {
     public struct History: Decodable, Sendable {
         public var ramMinutes: Int
         public var recentWindowS: Int
-        enum CodingKeys: String, CodingKey { case ramMinutes = "ram_minutes", recentWindowS = "recent_window_s" }
+        public var rollupDays: Int
+        enum CodingKeys: String, CodingKey {
+            case ramMinutes = "ram_minutes", recentWindowS = "recent_window_s", rollupDays = "rollup_days"
+        }
     }
 
     public struct HopTraceDefaults: Decodable, Sendable {
@@ -57,10 +60,15 @@ public struct Defaults: Decodable, Sendable {
     public var dnsQueryName: String
     /// The Appearance until the user picks one in Settings.
     public var appearance: Appearance
+    /// What a history graph point shows until the user picks one in Settings (rules/graph-aggregate.md).
+    public var graphAggregate: Aggregate
+    /// What a Probe's latency readout shows until the user picks one (rules/probe-stats.md, "Readouts").
+    public var readoutAggregate: Aggregate
 
     enum CodingKeys: String, CodingKey {
         case probeGroup = "probe_group", history, hopTrace = "hop_trace"
         case maxTimeoutMs = "max_timeout_ms", dnsQueryName = "dns_query_name", appearance
+        case graphAggregate = "graph_aggregate", readoutAggregate = "readout_aggregate"
     }
 
     /// The spec's shared defaults with this platform's `defaults.override.json` merged over them.

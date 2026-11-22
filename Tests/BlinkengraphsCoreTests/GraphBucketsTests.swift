@@ -38,3 +38,38 @@ import BlinkengraphsCore
     #expect(h.results(on: wifi)[probe] == [ProbeResult(at: 1, rttMs: 3)])
     #expect(h.results(on: Link(interface: "pdp_ip0", gateway: nil)).isEmpty)
 }
+
+@Test func alignedBucketsStayPutAsTimePasses() {
+    // A bucket's edges are multiples of its width, so a refresh moves no sample to another bucket.
+    let a = GraphBuckets.alignedRange(now: 1000.2, span: 60, count: 6)
+    let b = GraphBuckets.alignedRange(now: 1009.9, span: 60, count: 6)
+    #expect(a == b)
+    #expect(a == 950...1010)
+    #expect(GraphBuckets.alignedRange(now: 1010.0, span: 60, count: 6) == 960...1020)
+}
+
+@Test func niceCeilingOnlyStepsAtRoundNumbers() {
+    #expect(GraphBuckets.niceCeiling(9) == 10)
+    #expect(GraphBuckets.niceCeiling(21) == 25)
+    #expect(GraphBuckets.niceCeiling(24.9) == 25)
+    #expect(GraphBuckets.niceCeiling(61) == 75)
+    #expect(GraphBuckets.niceCeiling(140) == 150)
+    #expect(GraphBuckets.niceCeiling(1300) == 1500)
+}
+
+@Test func readoutP50IsTheProbeStatsMedian() {
+    let results = [10.0, 30, 20, 40].enumerated().map { ProbeResult(at: Double($0.offset), rttMs: $0.element) }
+    let stats = ProbeHistory(results: results, ramSeconds: 900).stats(windowSeconds: 30)
+    // rtt_ms takes index ⌊n/2⌋ = 2 of [10, 20, 30, 40]; the graph rank would take index 1.
+    #expect(Readout.value(results, stats: stats, aggregate: .p50, windowSeconds: 30) == 30)
+}
+
+@Test func readoutOtherAggregatesUseOnlyTheWindowsReplies() {
+    let old = ProbeResult(at: 0, rttMs: 500)
+    let recent = (100..<110).map { ProbeResult(at: Double($0), rttMs: Double($0 - 99)) } + [ProbeResult(at: 110, rttMs: nil)]
+    let results = [old] + recent
+    let stats = ProbeHistory(results: results, ramSeconds: 900).stats(windowSeconds: 30)
+    #expect(Readout.value(results, stats: stats, aggregate: .max, windowSeconds: 30) == 10)
+    #expect(Readout.value(results, stats: stats, aggregate: .p95, windowSeconds: 30) == 9)
+    #expect(Readout.value(results, stats: stats, aggregate: .avg, windowSeconds: 30) == 5.5)
+}
