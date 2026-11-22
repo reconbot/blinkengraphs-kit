@@ -40,6 +40,16 @@ public struct TargetLayout: Equatable, Sendable {
         }
     }
 
+    /// The keyword Targets, in the order the editor offers them.
+    public static let presets = [Probe.gateway, Probe.systemDNS]
+
+    /// Presets that complete what's typed, matched on the keyword or its name ("sys" and "system d"
+    /// both offer `system-dns`). Empty input offers every preset; a finished keyword offers none.
+    public static func presets(completing input: String) -> [String] {
+        let typed = input.trimmingCharacters(in: .whitespaces).lowercased()
+        return presets.filter { $0 != typed && ($0.hasPrefix(typed) || name($0).lowercased().hasPrefix(typed)) }
+    }
+
     public func entry(_ target: String) -> Entry? { entries.first { $0.target == target } }
 
     /// Targets with a charted Probe, in group order.

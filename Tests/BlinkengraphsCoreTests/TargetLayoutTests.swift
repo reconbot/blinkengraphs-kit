@@ -35,3 +35,12 @@ private func row(_ t: String, icmp: Bool = true, dns: Bool = false, trace: Bool 
     #expect(layout.addresses == ["1.1.1.1", "2620:fe::fe"])
     #expect(layout.targets == ["gateway", "1.1.1.1", "example.com", "2620:fe::fe"])
 }
+
+@Test func presetsCompleteTheKeywordOrItsName() {
+    #expect(TargetLayout.presets(completing: "") == ["gateway", "system-dns"])
+    #expect(TargetLayout.presets(completing: "gate") == ["gateway"])
+    #expect(TargetLayout.presets(completing: " Sys") == ["system-dns"])
+    #expect(TargetLayout.presets(completing: "system d") == ["system-dns"])
+    #expect(TargetLayout.presets(completing: "gateway").isEmpty)
+    #expect(TargetLayout.presets(completing: "1.1").isEmpty)
+}
