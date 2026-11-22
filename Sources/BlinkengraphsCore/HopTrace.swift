@@ -60,6 +60,13 @@ public struct HopTrace: Sendable {
         if r.reached { hops = hops.filter { $0.key <= r.ttl } }
     }
 
+    /// The rows to show, and the TTLs of the run of unanswered hops after the last one that
+    /// answered. Through a VPN or past a firewall that run can reach `max_ttl`; display only.
+    public static func collapsingSilentTail(_ rows: [HopRow]) -> (rows: [HopRow], silent: ClosedRange<Int>?) {
+        guard let last = rows.lastIndex(where: { $0.addr != nil }), last < rows.count - 1 else { return (rows, nil) }
+        return (Array(rows[...last]), rows[last + 1].ttl...rows[rows.count - 1].ttl)
+    }
+
     public var table: [HopRow] {
         hops.keys.sorted().map { ttl in
             let hop = hops[ttl]!

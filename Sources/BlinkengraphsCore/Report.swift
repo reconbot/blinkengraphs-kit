@@ -98,7 +98,7 @@ public enum Report {
         }
 
         for target in r.hops.keys.sorted() {
-            let rows = r.hops[target] ?? []
+            let (rows, silent) = HopTrace.collapsingSilentTail(r.hops[target] ?? [])
             // Sized to the longest host, so a long reverse-DNS name never runs into the loss column.
             let width = max(6, (rows.map { $0.addr.map(host)?.count ?? 1 }.max() ?? 0) + 2)
             out += ["", "Hop Trace to \(addr(target))", "   #  \(pad("host", width))loss   last    avg   best  worst"]
@@ -107,6 +107,7 @@ public enum Report {
                     + pad(pct(h.loss), 5) + [h.lastMs, h.avgMs, h.bestMs, h.worstMs].map { right(ms($0), 6) }.joined(separator: " ")
                 out.append(line)
             }
+            if let silent { out.append("  hops \(silent.lowerBound)–\(silent.upperBound): no reply") }
         }
         return out.joined(separator: "\n") + "\n"
     }

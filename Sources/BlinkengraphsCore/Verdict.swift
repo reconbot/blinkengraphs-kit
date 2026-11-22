@@ -21,7 +21,7 @@ public struct Probe: Codable, Hashable, Sendable {
 
 public enum FaultDomain: String, Codable, Sendable {
     case localLoad = "LocalLoad", lan = "Lan", isp = "Isp", dns = "Dns", remote = "Remote"
-    case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", offline = "Offline"
+    case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", offline = "Offline", vpn = "Vpn"
     case clear = "Clear"
 }
 
@@ -57,13 +57,17 @@ public struct VerdictInput: Codable, Sendable {
     public var uploadPeakBps: Double
     /// Whether the OS reports any usable network path; absent in a vector means true.
     public var pathUp: Bool
+    /// Whether the traffic goes through a VPN tunnel; absent in a vector means false.
+    public var viaVPN: Bool
 
-    public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0, pathUp: Bool = true) {
-        self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps; self.pathUp = pathUp
+    public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0,
+                pathUp: Bool = true, viaVPN: Bool = false) {
+        self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps
+        self.pathUp = pathUp; self.viaVPN = viaVPN
     }
 
     enum CodingKeys: String, CodingKey {
-        case probes, sample, uploadPeakBps = "upload_peak_bps", pathUp = "path_up"
+        case probes, sample, uploadPeakBps = "upload_peak_bps", pathUp = "path_up", viaVPN = "via_vpn"
     }
 
     public init(from decoder: Decoder) throws {
@@ -72,6 +76,7 @@ public struct VerdictInput: Codable, Sendable {
         sample = try c.decodeIfPresent([String: Double].self, forKey: .sample)
         uploadPeakBps = try c.decode(Double.self, forKey: .uploadPeakBps)
         pathUp = try c.decodeIfPresent(Bool.self, forKey: .pathUp) ?? true
+        viaVPN = try c.decodeIfPresent(Bool.self, forKey: .viaVPN) ?? false
     }
 }
 
@@ -124,14 +129,19 @@ public enum Verdict {
         let v6 = internet.filter { $0.probe.isIPv6 == true }
         func bestLoss(_ ps: [P]) -> Double { ps.map(\.stat.loss).min() ?? 1 }
         func works(_ ps: [P]) -> Bool { ps.contains { $0.stat.loss < 0.05 } }
+        // Through a VPN, what would blame the ISP or ping filtering is the tunnel or its exit.
+        let vpn = input.viaVPN
+        let blame: FaultDomain = vpn ? .vpn : .isp
         if !v4.isEmpty && !v6.isEmpty {
             if bestLoss(v6) >= 0.5 && works(v4) {
-                out.append(Finding(domain: .isp, severity: .warn,
-                                   headline: "IPv6 broken; IPv4 works: ISP or router IPv6 problem"))
+                out.append(Finding(domain: blame, severity: .warn, headline: vpn
+                    ? "IPv6 broken; IPv4 works: VPN has no IPv6 route"
+                    : "IPv6 broken; IPv4 works: ISP or router IPv6 problem"))
                 internet = v4
             } else if bestLoss(v4) >= 0.5 && works(v6) {
-                out.append(Finding(domain: .isp, severity: .crit,
-                                   headline: "IPv4 broken; IPv6 works: ISP or router IPv4 problem"))
+                out.append(Finding(domain: blame, severity: .crit, headline: vpn
+                    ? "IPv4 broken; IPv6 works: VPN has no IPv4 route"
+                    : "IPv4 broken; IPv6 works: ISP or router IPv4 problem"))
                 internet = v6
             }
         }
@@ -145,17 +155,23 @@ public enum Verdict {
         let tcp = internet.filter { $0.probe.protocol.hasPrefix("tcp:") }
 
         // 3–7: the first that matches wins.
-        if best.stat.loss >= 0.5 {
+        if best.stat.loss >= 0.5 && vpn {
+            out.append(Finding(domain: .vpn, severity: .crit,
+                               headline: "Internet unreachable through VPN: VPN or its exit problem"))
+        } else if best.stat.loss >= 0.5 {
             out.append(Finding(domain: .isp, severity: .crit, headline: gateway.isEmpty
                 ? "Internet unreachable, gateway not measured: ISP or WAN problem"
                 : "Gateway OK, internet unreachable: ISP or WAN problem"))
         } else if !icmp.isEmpty, icmp.allSatisfy({ $0.stat.loss >= 0.5 }), tcp.contains(where: { $0.stat.loss < 0.05 }) {
-            out.append(Finding(domain: .icmpFiltering, severity: .warn,
-                               headline: "ICMP blocked; TCP gets through: something filters ping"))
+            out.append(vpn
+                ? Finding(domain: .vpn, severity: .warn, headline: "ICMP blocked; TCP gets through: VPN filters ping")
+                : Finding(domain: .icmpFiltering, severity: .warn,
+                          headline: "ICMP blocked; TCP gets through: something filters ping"))
         } else if worst.stat.loss >= 0.05, best.stat.loss >= 0.05 {
             let prefix = gateway.isEmpty ? "" : "Gateway OK, "
-            out.append(Finding(domain: .isp, severity: worst.stat.loss >= 0.2 ? .crit : .warn,
-                               headline: "\(prefix)\(worst.probe.target) losing \(pct(worst.stat.loss)): ISP problem"))
+            out.append(Finding(domain: blame, severity: worst.stat.loss >= 0.2 ? .crit : .warn, headline: vpn
+                ? "\(worst.probe.target) losing \(pct(worst.stat.loss)) through VPN: VPN or its exit problem"
+                : "\(prefix)\(worst.probe.target) losing \(pct(worst.stat.loss)): ISP problem"))
         } else if worst.stat.loss >= 0.05 {
             let good = internet.first { $0.stat.loss < 0.05 && $0.probe.target != worst.probe.target } ?? best
             out.append(Finding(domain: .remote, severity: .warn, headline:

@@ -23,3 +23,21 @@ struct HopTraceVector: Decodable {
         }
     }
 }
+
+private func row(_ ttl: Int, _ addr: String?) -> HopRow {
+    HopRow(ttl: ttl, addr: addr, sent: 5, loss: addr == nil ? 1 : 0, lastMs: nil, bestMs: nil, avgMs: nil, worstMs: nil)
+}
+
+@Test func silentTailCollapses() {
+    let rows = [row(1, "100.68.70.116")] + (2...30).map { row($0, nil) }
+    let (shown, silent) = HopTrace.collapsingSilentTail(rows)
+    #expect(shown.map(\.ttl) == [1])
+    #expect(silent == 2...30)
+}
+
+@Test func silentHopsInTheMiddleStay() {
+    let rows = [row(1, "a"), row(2, nil), row(3, "b")]
+    let (shown, silent) = HopTrace.collapsingSilentTail(rows)
+    #expect(shown.count == 3)
+    #expect(silent == nil)
+}
