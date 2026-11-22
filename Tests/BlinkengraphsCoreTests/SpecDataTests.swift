@@ -9,7 +9,7 @@ import BlinkengraphsCore
     #expect(d.hopTrace.reverseDns)
     #expect(d.appearance == .system)
     #expect(d.graphAggregate == .p95)
-    #expect(d.readoutAggregate == .p50)
+    #expect(d.readoutAggregate == .p95)
     #expect(d.history.rollupDays == 7)
     #expect(d.captivePortalURL == "http://cp.cloudflare.com/generate_204")
     #expect(d.publicAddress.dnsServer == "ns3.cloudflare.com" && d.publicAddress.refreshS == 300)

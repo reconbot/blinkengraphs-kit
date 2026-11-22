@@ -33,10 +33,17 @@ public struct LinkHistories: Sendable {
 
     /// Each Probe's kept results on `link`, oldest first; for history graphs.
     public func results(on link: Link) -> [Probe: [ProbeResult]] {
-        (byLink[link] ?? [:]).mapValues(\.results)
+        held(on: link).mapValues(\.results)
     }
 
     public func stats(on link: Link, windowSeconds: Double) -> [Probe: ProbeStats] {
-        (byLink[link] ?? [:]).mapValues { $0.stats(windowSeconds: windowSeconds) }
+        held(on: link).mapValues { $0.stats(windowSeconds: windowSeconds) }
+    }
+
+    /// spec rules/history.md, "RAM": results with `at + ram_s > newest.at`, where newest is the
+    /// newest result of any Probe on the Link, so a Probe that stopped reporting ages out too.
+    private func held(on link: Link) -> [Probe: ProbeHistory] {
+        guard let newest = newestAt[link] else { return [:] }
+        return (byLink[link] ?? [:]).mapValues { $0.keeping(after: newest - ramSeconds) }
     }
 }

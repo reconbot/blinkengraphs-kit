@@ -133,6 +133,13 @@ public struct Minute: Equatable, Sendable, Codable {
 
     public init() {}
 
+    /// A Minute known only by its count, losses and max (as a vector gives one); its sum, min
+    /// and histogram all read as `max`, which is enough for the `max` aggregate.
+    public init(n: Int, lost: Int, max: Double) {
+        self.n = n; self.lost = lost; sum = max * Double(n); min = max; self.max = max
+        for _ in 0..<n { sketch.add(max) }
+    }
+
     /// Records one value; nil is a lost Probe.
     public mutating func record(_ value: Double?) {
         guard let v = value else { lost += 1; return }

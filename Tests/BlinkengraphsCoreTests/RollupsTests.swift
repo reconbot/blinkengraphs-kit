@@ -21,51 +21,50 @@ private let cell = Link(interface: "pdp_ip0", gateway: nil)
     #expect(back == stored)
 }
 
-@Test func aMinuteClosesWhenTheNextOneStarts() {
-    var r = Rollups(keepDays: 7)
-    #expect(r.record(icmp, ProbeResult(at: 60, rttMs: 10), on: wifi).isEmpty)
-    #expect(r.record(icmp, ProbeResult(at: 119, rttMs: nil), on: wifi).isEmpty)
-    let closed = r.record(icmp, ProbeResult(at: 120, rttMs: 12), on: wifi)
-    #expect(closed.count == 1)
-    #expect(closed.first?.minute == 1 && closed.first?.data.n == 1 && closed.first?.data.lost == 1)
-    #expect(r.record(icmp, ProbeResult(at: 130, rttMs: 12), on: wifi).isEmpty)
+@Test func aWrittenMinuteIsNeverWrittenAgain() {
+    var r = Rollups(keepDays: 7, maxTimeoutMs: 1000)
+    _ = r.record(icmp, ProbeResult(at: 10, rttMs: 1), on: wifi)
+    let first = r.record(icmp, ProbeResult(at: 62, rttMs: 1), on: wifi)
+    #expect(first.map(\.minute) == [0] && r.writtenThrough == 60)
+    // A straggler for minute 0, after it was written: kept out of storage, not merged.
+    let late = r.record(icmp, ProbeResult(at: 30, rttMs: 9), on: wifi)
+    #expect(late.isEmpty)
+    #expect(r.minutes(icmp, on: wifi, from: 0, before: 60).map(\.data.n) == [1])
 }
 
-@Test func graphPointsMergeWholeMinutesPerBucket() {
-    var r = Rollups(keepDays: 7)
-    for minute in 0..<4 {
-        for s in 0..<10 { _ = r.record(icmp, ProbeResult(at: Double(minute * 60 + s), rttMs: Double(minute + 1)), on: wifi) }
-    }
-    _ = r.record(icmp, ProbeResult(at: 125, rttMs: nil), on: wifi)
-    let points = r.points(icmp, on: wifi, from: 0, to: 240, count: 2, aggregate: .max)
-    #expect(points.map(\.start) == [0, 120])
-    #expect(points.map(\.value) == [2, 4])
-    #expect(points[0].loss == 0)
-    #expect(abs(points[1].loss - 1.0 / 21) < 1e-12)
-    #expect(r.points(icmp, on: cell, from: 0, to: 240, count: 2, aggregate: .max).allSatisfy { $0.count == 0 })
+@Test func shutdownWritesEveryPendingMinute() {
+    var r = Rollups(keepDays: 7, maxTimeoutMs: 1000)
+    _ = r.record(icmp, ProbeResult(at: 10, rttMs: 1), on: wifi)
+    _ = r.record(icmp, ProbeResult(at: 40, rttMs: 1), on: cell)
+    #expect(r.flush().map(\.minute) == [0, 0])
+    #expect(r.writtenThrough == 60)
+    #expect(r.flush().isEmpty)
 }
 
-@Test func summaryCoversTheWholeRange() {
-    var r = Rollups(keepDays: 7)
-    for (i, v) in [5.0, 1, 3].enumerated() { _ = r.record(icmp, ProbeResult(at: Double(i * 60), rttMs: v), on: wifi) }
-    _ = r.record(icmp, ProbeResult(at: 200, rttMs: nil), on: wifi)
-    let s = r.summary(icmp, on: wifi, from: 0, to: 240, aggregate: .max)
-    #expect(s.value == 5 && s.loss == 0.25)
-}
-
-@Test func insertedMinutesMergeWithLiveOnes() {
-    var r = Rollups(keepDays: 7)
-    _ = r.record(icmp, ProbeResult(at: 61, rttMs: 10), on: wifi)
-    var earlier = Minute()
-    earlier.record(30)
-    r.insert(StoredMinute(link: wifi, probe: icmp, minute: 1, data: earlier))
-    #expect(r.points(icmp, on: wifi, from: 60, to: 120, count: 1, aggregate: .max).first?.value == 30)
-    #expect(r.points(icmp, on: wifi, from: 60, to: 120, count: 1, aggregate: .max).first?.count == 2)
+@Test func insertedMinutesMoveTheHandover() {
+    var r = Rollups(keepDays: 7, maxTimeoutMs: 1000)
+    var m = Minute()
+    m.record(30)
+    r.insert(StoredMinute(link: wifi, probe: icmp, minute: 2, data: m))
+    #expect(r.writtenThrough == 180)
+    #expect(r.minutes(icmp, on: wifi, from: 0, before: 180).map(\.m) == [120])
+    #expect(r.oldest == 120)
 }
 
 @Test func minutesOlderThanTheKeepAreDropped() {
-    var r = Rollups(keepDays: 1)
+    var r = Rollups(keepDays: 1, maxTimeoutMs: 1000)
     _ = r.record(icmp, ProbeResult(at: 0, rttMs: 10), on: wifi)
-    _ = r.record(icmp, ProbeResult(at: 86_400 + 120, rttMs: 10), on: cell)
-    #expect(r.points(icmp, on: wifi, from: 0, to: 60, count: 1, aggregate: .max).first?.count == 0)
+    _ = r.record(icmp, ProbeResult(at: 70, rttMs: 10), on: wifi)
+    _ = r.record(icmp, ProbeResult(at: 86_400 + 200, rttMs: 10), on: cell)
+    #expect(r.minutes(icmp, on: wifi, from: 0, before: 86_400).isEmpty)
+}
+
+@Test func aMinuteReadBackAfterRecordingBeganStands() {
+    var r = Rollups(keepDays: 7, maxTimeoutMs: 1000)
+    _ = r.record(icmp, ProbeResult(at: 10, rttMs: 1), on: wifi)
+    var stored = Minute()
+    stored.record(30)
+    r.insert(StoredMinute(link: wifi, probe: icmp, minute: 0, data: stored))
+    #expect(r.flush().isEmpty)
+    #expect(r.minutes(icmp, on: wifi, from: 0, before: 60).map(\.data) == [stored])
 }

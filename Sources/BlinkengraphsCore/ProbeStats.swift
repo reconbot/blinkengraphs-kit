@@ -47,6 +47,14 @@ public struct ProbeHistory: Sendable {
         }
     }
 
+    /// The history without results at or before `cutoff`.
+    public func keeping(after cutoff: Double) -> ProbeHistory {
+        guard let first = results.first, first.at <= cutoff else { return self }
+        var copy = self
+        copy.results = results.filter { $0.at > cutoff }
+        return copy
+    }
+
     public func stats(windowSeconds: Double) -> ProbeStats {
         guard let newest = results.last?.at else {
             return ProbeStats(loss: 0, rttMs: nil, baselineMs: nil, jitterMs: nil)
@@ -56,7 +64,8 @@ public struct ProbeHistory: Sendable {
         let loss = window.isEmpty ? 0 : 1 - Double(replies.count) / Double(window.count)
 
         let sorted = replies.sorted()
-        let rtt = sorted.isEmpty ? nil : sorted[sorted.count / 2]
+        // One percentile rank everywhere: index ⌊(n − 1) × X / 100⌋, so the lower median.
+        let rtt = sorted.isEmpty ? nil : sorted[(sorted.count - 1) / 2]
 
         let all = results.compactMap(\.rttMs).sorted()
         let baseline = all.isEmpty ? nil : all[Int((Double(all.count - 1) * 0.1).rounded(.down))]

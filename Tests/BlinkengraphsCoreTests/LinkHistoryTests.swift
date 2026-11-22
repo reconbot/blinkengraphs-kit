@@ -18,7 +18,9 @@ private let wifi = Link(interface: "en0", gateway: "192.168.1.1")
     h.record(gateway, ProbeResult(at: 0, rttMs: 4), on: wifi)
     h.record(gateway, ProbeResult(at: 1, rttMs: nil), on: cell)
     h.record(gateway, ProbeResult(at: 2, rttMs: 6), on: wifi)
-    #expect(h.stats(on: wifi, windowSeconds: 30)[gateway]?.rttMs == 6)
+    // Both Wi-Fi replies, none of cellular's loss: the lower median of [4, 6].
+    #expect(h.stats(on: wifi, windowSeconds: 30)[gateway]?.rttMs == 4)
+    #expect(h.stats(on: wifi, windowSeconds: 30)[gateway]?.loss == 0)
     #expect(h.stats(on: wifi, windowSeconds: 30)[gateway]?.baselineMs == 4)
 }
 

@@ -4,29 +4,29 @@ import BlinkengraphsCore
 private let probe = Probe(target: "1.1.1.1", protocol: "icmp")
 private let wifi = Link(interface: "en0", gateway: nil)
 
-@Test func shortSpansReadRawSamples() {
+@Test func shortSpansReadRawSamplesInEpochBuckets() {
     let results = (0..<120).map { ProbeResult(at: Double($0), rttMs: $0 % 2 == 0 ? 10 : nil) }
-    let line = HistoryLine.make(span: 60, buckets: 60, now: 119.5, aggregate: .max, ramSeconds: 900,
-                                results: results, rollups: nil, probe: probe, link: wifi)
+    let line = HistoryLine.make(span: 60, now: 119, aggregate: .max, results: results, rollups: nil, probe: probe, link: wifi)
     #expect(line?.points.count == 61)
-    #expect(line?.points.last?.start == 119)
+    #expect(line?.points.first?.start == 59 && line?.points.last?.start == 119)
     #expect(line?.summary == 10)
-    #expect(line?.loss == 0.5)
+    #expect(line?.bucketWidth == 1)
 }
 
-@Test func longSpansReadRollups() {
-    var rollups = Rollups(keepDays: 1)
-    for minute in 0..<120 { _ = rollups.record(probe, ProbeResult(at: Double(minute * 60), rttMs: Double(minute)), on: wifi) }
-    let line = HistoryLine.make(span: 3600, buckets: 60, now: 7199, aggregate: .max, ramSeconds: 900,
-                                results: nil, rollups: rollups, probe: probe, link: wifi)
-    #expect(line?.points.count == 61)
-    #expect(line?.points.last?.value == 119)
-    #expect(line?.summary == 119)
-    #expect(HistoryLine.make(span: 3600, buckets: 60, now: 7199, aggregate: .max, ramSeconds: 900,
-                             results: nil, rollups: rollups, probe: probe, link: Link(interface: "x", gateway: nil)) == nil)
+@Test func storageServesBeforeTheHandoverAndRamAfter() {
+    var rollups = Rollups(keepDays: 1, maxTimeoutMs: 1000)
+    var ram: [ProbeResult] = []
+    for at in stride(from: 0.0, to: 7200, by: 1) {
+        let r = ProbeResult(at: at, rttMs: at < 3600 ? 99 : 5)
+        _ = rollups.record(probe, r, on: wifi)
+        if at > 7200 - 900 { ram.append(r) }
+    }
+    let line = HistoryLine.make(span: 7200, now: 7199, aggregate: .max, results: ram, rollups: rollups, probe: probe, link: wifi)
+    #expect(line?.points.first?.value == 99)
+    #expect(line?.points.last?.value == 5)
+    #expect(line?.summary == 99)
 }
 
 @Test func nothingToShowIsNil() {
-    #expect(HistoryLine.make(span: 60, buckets: 60, now: 100, aggregate: .p50, ramSeconds: 900,
-                             results: [], rollups: nil, probe: probe, link: wifi) == nil)
+    #expect(HistoryLine.make(span: 60, now: 100, aggregate: .p50, results: [], rollups: nil, probe: probe, link: wifi) == nil)
 }

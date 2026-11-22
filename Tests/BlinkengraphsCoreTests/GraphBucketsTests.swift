@@ -60,8 +60,8 @@ import BlinkengraphsCore
 @Test func readoutP50IsTheProbeStatsMedian() {
     let results = [10.0, 30, 20, 40].enumerated().map { ProbeResult(at: Double($0.offset), rttMs: $0.element) }
     let stats = ProbeHistory(results: results, ramSeconds: 900).stats(windowSeconds: 30)
-    // rtt_ms takes index ⌊n/2⌋ = 2 of [10, 20, 30, 40]; the graph rank would take index 1.
-    #expect(Readout.value(results, stats: stats, aggregate: .p50, windowSeconds: 30) == 30)
+    // One rank everywhere: index ⌊(n − 1) / 2⌋ = 1 of [10, 20, 30, 40].
+    #expect(Readout.value(results, stats: stats, aggregate: .p50, windowSeconds: 30) == 20)
 }
 
 @Test func readoutOtherAggregatesUseOnlyTheWindowsReplies() {
