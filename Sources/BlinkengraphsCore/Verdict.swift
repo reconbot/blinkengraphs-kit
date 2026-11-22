@@ -22,7 +22,7 @@ public struct Probe: Codable, Hashable, Sendable {
 public enum FaultDomain: String, Codable, Sendable {
     case localLoad = "LocalLoad", lan = "Lan", isp = "Isp", dns = "Dns", remote = "Remote"
     case icmpFiltering = "IcmpFiltering", selfSaturation = "SelfSaturation", offline = "Offline", vpn = "Vpn"
-    case captivePortal = "CaptivePortal", clear = "Clear"
+    case captivePortal = "CaptivePortal", clear = "Clear", paused = "Paused"
 }
 
 /// Declared most severe first; `Comparable` sorts in that order.
@@ -61,26 +61,45 @@ public struct VerdictInput: Codable, Sendable {
     public var viaVPN: Bool
     /// Whether a sign-in page holds back the internet; absent in a vector means false.
     public var captivePortal: Bool
+    /// Seconds since the last Pause ended; nil when there has been none.
+    public var sincePauseS: Double?
+    /// `history.recent_window_s`: how long after a Pause "Resuming measurements" can show.
+    public var windowS: Double
 
     public init(probes: [ProbeStat], sample: [String: Double]? = nil, uploadPeakBps: Double = 0,
-                pathUp: Bool = true, viaVPN: Bool = false, captivePortal: Bool = false) {
+                pathUp: Bool = true, viaVPN: Bool = false, captivePortal: Bool = false,
+                sincePauseS: Double? = nil, windowS: Double = 30) {
         self.probes = probes; self.sample = sample; self.uploadPeakBps = uploadPeakBps
         self.pathUp = pathUp; self.viaVPN = viaVPN; self.captivePortal = captivePortal
+        self.sincePauseS = sincePauseS; self.windowS = windowS
     }
 
     enum CodingKeys: String, CodingKey {
         case probes, sample, uploadPeakBps = "upload_peak_bps", pathUp = "path_up", viaVPN = "via_vpn"
-        case captivePortal = "captive_portal"
+        case captivePortal = "captive_portal", sincePauseS = "since_pause_s"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         probes = try c.decode([ProbeStat].self, forKey: .probes)
         sample = try c.decodeIfPresent([String: Double].self, forKey: .sample)
-        uploadPeakBps = try c.decode(Double.self, forKey: .uploadPeakBps)
+        uploadPeakBps = try c.decodeIfPresent(Double.self, forKey: .uploadPeakBps) ?? 0
         pathUp = try c.decodeIfPresent(Bool.self, forKey: .pathUp) ?? true
         viaVPN = try c.decodeIfPresent(Bool.self, forKey: .viaVPN) ?? false
         captivePortal = try c.decodeIfPresent(Bool.self, forKey: .captivePortal) ?? false
+        sincePauseS = try c.decodeIfPresent(Double.self, forKey: .sincePauseS)
+        windowS = 30
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(probes, forKey: .probes)
+        try c.encodeIfPresent(sample, forKey: .sample)
+        try c.encode(uploadPeakBps, forKey: .uploadPeakBps)
+        try c.encode(pathUp, forKey: .pathUp)
+        try c.encode(viaVPN, forKey: .viaVPN)
+        try c.encode(captivePortal, forKey: .captivePortal)
+        try c.encodeIfPresent(sincePauseS, forKey: .sincePauseS)
     }
 }
 
@@ -91,6 +110,9 @@ public enum Verdict {
         if !input.pathUp {
             // With no network path, Offline replaces every network and DNS rule.
             findings = [Finding(domain: .offline, severity: .crit, headline: "No network connection")]
+        } else if resuming(input) {
+            // Right after a Pause no Probe has stats yet: a resume never reads as a fault.
+            findings = [Finding(domain: .paused, severity: .ok, headline: "Resuming measurements")]
         } else {
             let network = networkFindings(input)
             // Rule 1 stops every other network rule, the DNS rule included (vector lan-down).
@@ -108,6 +130,12 @@ public enum Verdict {
     }
 
     private typealias P = VerdictInput.ProbeStat
+
+    /// rules/verdict.md, "Resuming": no Gateway or Internet Probe has stats, within a window of a Pause.
+    private static func resuming(_ input: VerdictInput) -> Bool {
+        guard let since = input.sincePauseS, since < input.windowS else { return false }
+        return !input.probes.contains { $0.probe.target != Probe.systemDNS && $0.probe.protocol != "dns" }
+    }
 
     private static func counts(_ p: P) -> Bool { p.stat.baselineMs != nil || p.stat.loss > 0 }
 
@@ -157,9 +185,11 @@ public enum Verdict {
 
         guard !internet.isEmpty else { return out }
 
-        let best = internet.min { $0.stat.loss < $1.stat.loss }!
-        // Ties go to the last Probe, matching Rust's `max_by` in the reference (vector isp-loss).
-        let worst = internet.reversed().max { $0.stat.loss < $1.stat.loss }!
+        // Worst and best compare loss as shown, a whole percent; among equals the first in
+        // Probe Group order wins, so the headline doesn't flip between refreshes.
+        func shown(_ p: P) -> Int { Int((p.stat.loss * 100).rounded()) }
+        let best = internet.first { p in internet.allSatisfy { shown(p) <= shown($0) } }!
+        let worst = internet.first { p in internet.allSatisfy { shown(p) >= shown($0) } }!
         let icmp = internet.filter { $0.probe.protocol == "icmp" }
         let tcp = internet.filter { $0.probe.protocol.hasPrefix("tcp:") }
 

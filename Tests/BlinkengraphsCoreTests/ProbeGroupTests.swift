@@ -24,13 +24,13 @@ import BlinkengraphsCore
     let d = try Defaults.decode(Spec.file("defaults.json"))
     let removed = Probe(target: "9.9.9.9", protocol: "icmp"), kept = Probe(target: "1.1.1.1", protocol: "icmp")
     let wifi = Link(interface: "en0", gateway: nil)
-    var m = Measurements(defaults: d)
+    var m = Measurements(defaults: d, settle: 0)
     m.setPath(link: wifi, up: true, viaVPN: false)
-    _ = m.record(removed, .lost, sentOn: wifi, at: 1)
-    _ = m.record(kept, .reply(ms: 10), sentOn: wifi, at: 1)
+    m.resume(at: 0)
+    m.commit(.init(start: 1, end: 1.5, link: wifi, outcomes: [(removed, .lost), (kept, .reply(ms: 10))]))
     var group = d.probeGroup
     group.targets.removeAll { $0.target == "9.9.9.9" }
     m.setProbeGroup(group)
-    #expect(m.snapshot().stats.keys.sorted { $0.target < $1.target } == [kept])
-    #expect(m.snapshot().findings.first?.domain == .clear)
+    #expect(m.snapshot(now: 2).stats.keys.sorted { $0.target < $1.target } == [kept])
+    #expect(m.snapshot(now: 2).findings.first?.domain == .clear)
 }

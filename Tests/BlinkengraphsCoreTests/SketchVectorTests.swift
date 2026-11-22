@@ -35,9 +35,9 @@ private func load<T: Decodable>(_ name: String, as: T.Type) throws -> T {
     try JSONDecoder().decode(T.self, from: Spec.file("vectors/sketch/\(name).json"))
 }
 
-private func rollups() throws -> [Minute] {
+private func rollups() throws -> [Row] {
     try load("minutes", as: MinutesVector.self).cases.map { c in
-        var m = Minute()
+        var m = Row()
         for v in c.values { m.record(v) }
         return m
     }
@@ -65,13 +65,13 @@ private func rollups() throws -> [Minute] {
 @Test func sketchMergeVector() throws {
     let v = try load("merge", as: MergeVector.self)
     let minutes = try rollups()
-    let merged = Minute.merge(minutes)
+    let merged = Row.merge(minutes)
     #expect(merged.n == v.merged.n && merged.lost == v.merged.lost)
     #expect(merged.sketch.encoded.hex == v.merged.sk)
     #expect(hex(merged.sum) == v.merged.sum?.bits)
     #expect(abs(merged.loss - v.loss) <= 0.01)
     // Any merge order gives the same histogram.
-    #expect(Minute.merge(minutes.reversed()).sketch.encoded == merged.sketch.encoded)
+    #expect(Row.merge(minutes.reversed()).sketch.encoded == merged.sketch.encoded)
     let aggregates: [String: Aggregate] = ["avg": .avg, "max": .max, "p50": .p50, "p95": .p95, "p99": .p99]
     for (name, bits) in v.aggregates {
         #expect(merged.value(aggregates[name]!).map(hex) == bits.bits, "\(name)")
@@ -83,7 +83,7 @@ private extension Array where Element == UInt8 {
 }
 
 @Test func zeroBucketRankIsZeroEvenAboveTheMinimum() {
-    var m = Minute()
+    var m = Row()
     for v in [0.0005, 0.0005, 0.0005, 50] { m.record(v) } // 0.0005 < 2⁻¹⁰: zero bucket
     #expect(m.value(.p50) == 0)
 }

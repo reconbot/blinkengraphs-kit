@@ -27,48 +27,22 @@ public struct ProbeStats: Codable, Equatable, Sendable {
     }
 }
 
-/// One Probe's results, kept for `ramSeconds` behind the newest.
-public struct ProbeHistory: Sendable {
-    public private(set) var results: [ProbeResult] = []
-    public let ramSeconds: Double
-
-    public init(ramSeconds: Double) { self.ramSeconds = ramSeconds }
-
-    public init(results: [ProbeResult], ramSeconds: Double) {
-        self.ramSeconds = ramSeconds
-        for r in results { record(r) }
-    }
-
-    public mutating func record(_ result: ProbeResult) {
-        results.append(result)
-        let newest = result.at
-        if let firstKept = results.firstIndex(where: { $0.at + ramSeconds > newest }), firstKept > 0 {
-            results.removeFirst(firstKept)
-        }
-    }
-
-    /// The history without results at or before `cutoff`.
-    public func keeping(after cutoff: Double) -> ProbeHistory {
-        guard let first = results.first, first.at <= cutoff else { return self }
-        var copy = self
-        copy.results = results.filter { $0.at > cutoff }
-        return copy
-    }
-
-    public func stats(windowSeconds: Double) -> ProbeStats {
-        guard let newest = results.last?.at else {
-            return ProbeStats(loss: 0, rttMs: nil, baselineMs: nil, jitterMs: nil)
-        }
-        let window = results.filter { $0.at + windowSeconds > newest }
+extension ProbeStats {
+    /// A Probe's stats at `now`: its window is the results with `at > now − window_s`, measured
+    /// back from now so results from before a Pause age out. Nil when the window is empty.
+    /// The baseline spans every RTT Raw keeps, `at > now − raw_s`.
+    public static func of(_ results: [ProbeResult], now: Double, windowSeconds: Double, rawSeconds: Double) -> ProbeStats? {
+        let window = results.filter { $0.at > now - windowSeconds && $0.at <= now }
+        guard !window.isEmpty else { return nil }
         let replies = window.compactMap(\.rttMs)
-        let loss = window.isEmpty ? 0 : 1 - Double(replies.count) / Double(window.count)
+        let loss = 1 - Double(replies.count) / Double(window.count)
 
         let sorted = replies.sorted()
         // One percentile rank everywhere: index ⌊(n − 1) × X / 100⌋, so the lower median.
         let rtt = sorted.isEmpty ? nil : sorted[(sorted.count - 1) / 2]
 
-        let all = results.compactMap(\.rttMs).sorted()
-        let baseline = all.isEmpty ? nil : all[Int((Double(all.count - 1) * 0.1).rounded(.down))]
+        let all = results.filter { $0.at > now - rawSeconds && $0.at <= now }.compactMap(\.rttMs).sorted()
+        let baseline = all.isEmpty ? nil : all[(all.count - 1) * 10 / 100]
 
         let jitter: Double? = replies.count < 2 ? nil
             : zip(replies, replies.dropFirst()).map { abs($1 - $0) }.reduce(0, +) / Double(replies.count - 1)

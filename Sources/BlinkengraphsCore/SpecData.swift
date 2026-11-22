@@ -58,11 +58,17 @@ public struct Defaults: Decodable, Sendable {
     }
 
     public struct History: Decodable, Sendable {
-        public var ramMinutes: Int
+        public struct ArchiveDefaults: Decodable, Sendable {
+            public var stepS: Int
+            public var rows: Int
+            enum CodingKeys: String, CodingKey { case stepS = "step_s", rows }
+        }
+        public var rawMinutes: Int
         public var recentWindowS: Int
-        public var rollupDays: Int
+        /// A1, A2 and A3, finest first (rules/history.md, "Archives").
+        public var archives: [ArchiveDefaults]
         enum CodingKeys: String, CodingKey {
-            case ramMinutes = "ram_minutes", recentWindowS = "recent_window_s", rollupDays = "rollup_days"
+            case rawMinutes = "raw_minutes", recentWindowS = "recent_window_s", archives
         }
     }
 

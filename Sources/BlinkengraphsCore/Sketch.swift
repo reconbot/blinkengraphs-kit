@@ -122,8 +122,8 @@ public struct Sketch: Equatable, Sendable {
     }
 }
 
-/// One key's per-minute storage.
-public struct Minute: Equatable, Sendable, Codable {
+/// One key over one step of an Archive (spec rules/graph-aggregate.md, "A Row").
+public struct Row: Equatable, Sendable, Codable {
     public private(set) var n = 0
     public private(set) var lost = 0
     public private(set) var sum = 0.0
@@ -133,11 +133,16 @@ public struct Minute: Equatable, Sendable, Codable {
 
     public init() {}
 
-    /// A Minute known only by its count, losses and max (as a vector gives one); its sum, min
+    /// A Row known only by its count, losses and max (as a vector gives one); its sum, min
     /// and histogram all read as `max`, which is enough for the `max` aggregate.
     public init(n: Int, lost: Int, max: Double) {
         self.n = n; self.lost = lost; sum = max * Double(n); min = max; self.max = max
         for _ in 0..<n { sketch.add(max) }
+    }
+
+    /// A Row of `values` in arrival order, which `sum` adds in; nil is a lost Probe.
+    public init(values: [Double?]) {
+        for v in values { record(v) }
     }
 
     /// Records one value; nil is a lost Probe.
@@ -150,10 +155,10 @@ public struct Minute: Equatable, Sendable, Codable {
         sketch.add(v)
     }
 
-    /// Merges minutes given in ascending order; the sum depends on that order, the rest doesn't.
-    public static func merge<S: Sequence>(_ minutes: S) -> Minute where S.Element == Minute {
-        var out = Minute()
-        for m in minutes {
+    /// Merges Rows given in ascending step order; the sum depends on that order, the rest doesn't.
+    public static func merge<S: Sequence>(_ rows: S) -> Row where S.Element == Row {
+        var out = Row()
+        for m in rows {
             out.n += m.n
             out.lost += m.lost
             out.sum += m.sum
@@ -166,7 +171,7 @@ public struct Minute: Equatable, Sendable, Codable {
 
     public var loss: Double { n + lost == 0 ? 0 : Double(lost) / Double(n + lost) }
 
-    // JSON has no infinity, so an empty minute leaves out min and max; the sketch travels in
+    // JSON has no infinity, so an empty Row leaves out min and max; the sketch travels in
     // its spec encoding (rules/graph-aggregate.md), base64.
     enum CodingKeys: String, CodingKey { case n, lost, sum, min, max, sk }
 

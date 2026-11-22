@@ -15,13 +15,15 @@ private struct WholeMs: Decodable {
 }
 
 @Test func probeAndHopResultsAreRecordedInWholeMilliseconds() throws {
-    var m = Measurements(defaults: try Defaults.decode(Spec.file("defaults.json")))
+    var m = Measurements(defaults: try Defaults.decode(Spec.file("defaults.json")), settle: 0)
     let link = Link(interface: "en0", gateway: nil)
     _ = m.setPath(link: link, up: true, viaVPN: false)
+    m.resume(at: 0)
     let probe = Probe(target: "1.1.1.1", protocol: "icmp")
-    #expect(m.record(probe, .reply(ms: 12.5), sentOn: link, at: 0)?.rttMs == 13)
+    m.commit(.init(start: 1, end: 1.5, link: link, outcomes: [(probe, .reply(ms: 12.5))]))
+    #expect(m.history.raw[HistoryKey(link: link, probe: probe)]?.first?.rttMs == 13)
     m.recordSweep([HopResult(ttl: 1, addr: "192.0.2.1", rttMs: 0.4, reached: true)], target: "1.1.1.1", sentOn: link)
-    #expect(m.snapshot().hops["1.1.1.1"]?.first?.lastMs == 0)
+    #expect(m.snapshot(now: 2).hops["1.1.1.1"]?.first?.lastMs == 0)
 }
 
 @Test func displaysShowWholeMilliseconds() {
