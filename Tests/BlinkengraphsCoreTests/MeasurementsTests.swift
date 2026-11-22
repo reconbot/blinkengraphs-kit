@@ -131,3 +131,27 @@ private func round(_ at: Double, on link: Link = wifi, _ outcomes: [(Probe, Meas
     m.setPath(link: wifi, up: true, viaVPN: false)
     #expect(m.snapshot(now: t0).hops["1.1.1.1"]?.count == 3)
 }
+
+private let vpn = Link(interface: "utun4", gateway: nil)
+
+@Test func eachActiveLinkIsJudgedOnItsOwnProbes() throws {
+    var m = try measurements()
+    m.setActiveLinks([wifi, cell])
+    m.commit(round(t0 + 3, on: wifi, [(gateway, .reply(ms: 3)), (cloudflare, .lost)]))
+    m.commit(round(t0 + 3, on: cell, [(cloudflare, .reply(ms: 40))]))
+    let s = m.snapshot(now: t0 + 4)
+    #expect(s.links.map(\.link) == [wifi, cell])
+    #expect(s.links[0].findings.first?.domain == .isp)
+    #expect(s.links[1].stats[cloudflare]?.rttMs == 40)
+    #expect(s.links[1].findings.first?.domain == .clear)
+}
+
+@Test func underAVpnTheVerdictTakesTheGatewayOfTheLinkCarryingIt() throws {
+    var m = try measurements(on: vpn)
+    m.setPath(link: vpn, up: true, viaVPN: true)
+    m.setActiveLinks([vpn, wifi])
+    m.commit(round(t0 + 3, on: wifi, [(gateway, .lost)]))
+    m.commit(round(t0 + 3, on: vpn, [(cloudflare, .lost)]))
+    // Gateway and Internet both down: the LAN, not the tunnel.
+    #expect(m.snapshot(now: t0 + 4).findings.first?.headline == "Gateway unreachable: Wi-Fi or LAN problem")
+}

@@ -42,6 +42,16 @@ public struct Measurements: Sendable {
         /// Measuring stopped, or resumed and still settling.
         public var paused: Bool
         public var now: Double
+        /// Every active Link, the default-route one first: its own stats and Findings, for the
+        /// Networks strip. The Verdict above speaks for the default-route Link only.
+        public var links: [LinkState] = []
+    }
+
+    /// One active Link's state, judged on its own Probes.
+    public struct LinkState: Sendable {
+        public var link: Link
+        public var stats: [Probe: ProbeStats]
+        public var findings: [Finding]
     }
 
     private let defaults: Defaults
@@ -49,6 +59,8 @@ public struct Measurements: Sendable {
     private var traces: [Link: [String: HopTrace]] = [:]
     private var plans: [Link: [String: HopSweepPlan]] = [:]
     public private(set) var link = Link(interface: "none", gateway: nil)
+    /// Every Link being measured, in the order the app ranks them; the default-route one too.
+    private var active: [Link] = []
     private var pathUp = true
     private var viaVPN = false
     // These describe the current Link only and reset when it changes.
@@ -177,6 +189,9 @@ public struct Measurements: Sendable {
         if link == self.link { publicAddress = readings }
     }
 
+    /// The Links being measured now, ranked: the first non-tunnel one carries a VPN's tunnel.
+    public mutating func setActiveLinks(_ links: [Link]) { active = links }
+
     /// Still measuring, with nothing else recorded since the last save: so a kill's Pause
     /// begins here, not at the last result (decision 3 in docs/plan-spec-5.md).
     public mutating func mark(at t: Double) { history.mark(at: Int(t.rounded(.down))) }
@@ -193,6 +208,35 @@ public struct Measurements: Sendable {
 
     public func snapshot(now: Double) -> Snapshot {
         let windowS = Double(defaults.history.recentWindowS)
+        let (stats, window) = stats(on: link, now: now)
+        let since = history.pauses.last.flatMap { $0.end <= now ? now - $0.end : nil }
+        let isPaused = paused(at: now)
+        var input = probes.compactMap { p in stats[p].map { VerdictInput.ProbeStat(probe: p, stat: $0) } }
+        // A tunnel has no Gateway: the Gateway Probe of the Link carrying it speaks for the LAN
+        // (decision 1 in docs/plan-spec-5.md; the spec's VPN vectors feed one).
+        if viaVPN, !input.contains(where: { $0.probe.target == Probe.gateway }),
+           let carrier = active.first(where: { $0 != link && $0.gateway != nil }) {
+            let borrowed = self.stats(on: carrier, now: now).stats
+            input = probes.filter { $0.target == Probe.gateway }.compactMap { p in borrowed[p].map { .init(probe: p, stat: $0) } } + input
+        }
+        let findings = Verdict.evaluate(VerdictInput(
+            probes: input, pathUp: pathUp, viaVPN: viaVPN, captivePortal: captivePortal,
+            sincePauseS: isPaused ? 0 : since, windowS: windowS))
+        let links = ([link] + active.filter { $0 != link }).map { l -> LinkState in
+            if l == link { return LinkState(link: l, stats: stats, findings: findings) }
+            let own = self.stats(on: l, now: now).stats
+            return LinkState(link: l, stats: own, findings: Verdict.evaluate(VerdictInput(
+                probes: probes.compactMap { p in own[p].map { .init(probe: p, stat: $0) } },
+                sincePauseS: isPaused ? 0 : since, windowS: windowS)))
+        }
+        return Snapshot(findings: findings, stats: stats, denied: denied,
+                        hops: (traces[link] ?? [:]).filter { traced.contains($0.key) }.mapValues(\.table),
+                        window: window, captivePortal: captivePortal, publicAddress: publicAddress,
+                        paused: isPaused, now: now, links: links)
+    }
+
+    private func stats(on link: Link, now: Double) -> (stats: [Probe: ProbeStats], window: [Probe: [ProbeResult]]) {
+        let windowS = Double(defaults.history.recentWindowS)
         var stats: [Probe: ProbeStats] = [:], window: [Probe: [ProbeResult]] = [:]
         for probe in probes {
             let raw = history.results(HistoryKey(link: link, probe: probe), after: Int.min, through: Int(now))
@@ -202,15 +246,6 @@ public struct Measurements: Sendable {
                 window[probe] = results.filter { $0.at > now - windowS }
             }
         }
-        let since = history.pauses.last.flatMap { $0.end <= now ? now - $0.end : nil }
-        let isPaused = paused(at: now)
-        let findings = Verdict.evaluate(VerdictInput(
-            probes: probes.compactMap { p in stats[p].map { .init(probe: p, stat: $0) } },
-            pathUp: pathUp, viaVPN: viaVPN, captivePortal: captivePortal,
-            sincePauseS: isPaused ? 0 : since, windowS: windowS))
-        return Snapshot(findings: findings, stats: stats, denied: denied,
-                        hops: (traces[link] ?? [:]).filter { traced.contains($0.key) }.mapValues(\.table),
-                        window: window, captivePortal: captivePortal, publicAddress: publicAddress,
-                        paused: isPaused, now: now)
+        return (stats, window)
     }
 }
