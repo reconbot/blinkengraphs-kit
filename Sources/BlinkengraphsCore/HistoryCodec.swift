@@ -75,7 +75,7 @@ public enum HistoryCodec {
         while !r.atEnd {
             let start = r.i
             guard let record = r.next(keys: &keys, links: &links) else {
-                // A torn tail, or a tag this version doesn't know: stop.
+                // A torn tail, damaged bytes, or a tag this version doesn't know: stop.
                 r.i = start
                 break
             }
@@ -105,7 +105,8 @@ public enum HistoryCodec {
                 guard let id = u16(), let at = u32(), let rtt = u16(), let key = keys[id] else { return nil }
                 return .result(key, RawResult(at: at, rttMs: rtt == HistoryCodec.lost ? nil : Double(rtt)))
             case .pause:
-                guard let b = f64(), let e = f64() else { return nil }
+                // Only damaged bytes hold a non-finite time, and History turns times into Ints.
+                guard let b = f64(), let e = f64(), b.isFinite, e.isFinite else { return nil }
                 return .pause(Pause(begin: b, end: e))
             case .mark:
                 guard let at = u32() else { return nil }
@@ -122,7 +123,7 @@ public enum HistoryCodec {
                 guard let sketch = try? Sketch(encoded: sk) else { return nil }
                 return .row(level: Int(level), key: key, m: m, row: Row(n: n, lost: lost, sum: sum, min: mn, max: mx, sketch: sketch))
             case .paused:
-                guard let level = u8(), let m = u32(), let s = f64() else { return nil }
+                guard let level = u8(), let m = u32(), let s = f64(), s.isFinite else { return nil }
                 return .paused(level: Int(level), m: m, seconds: s)
             case .written:
                 guard let level = u8(), let n = u32() else { return nil }
