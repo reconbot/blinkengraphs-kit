@@ -109,3 +109,19 @@ private func history() -> History {
     #expect(m.history.rawCutoff(now: t0) == .min)
     #expect(m.history.archiveRecords.isEmpty)
 }
+
+@Test func aPauseOrPausedSecondsThatIsNotFiniteEndsTheFile() throws {
+    // The app never writes these; only damaged bytes do, and an infinite Pause end traps at launch.
+    var w = HistoryCodec.Writer()
+    let good = w.encode([.mark(at: t0)])
+    for bad: HistoryRecord in [.pause(Pause(begin: Double(t0), end: .infinity)),
+                               .pause(Pause(begin: .nan, end: Double(t0))),
+                               .paused(level: 0, m: t0, seconds: .infinity)] {
+        var bw = HistoryCodec.Writer()
+        let records = HistoryCodec.decode(good + bw.encode([bad, .mark(at: t0 + 1)]))
+        #expect(records == [.mark(at: t0)])
+        var h = history()
+        h.replay(records)
+        _ = h.newestAt
+    }
+}
