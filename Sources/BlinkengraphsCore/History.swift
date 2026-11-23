@@ -153,9 +153,11 @@ public struct History: Sendable {
         return out
     }
 
-    /// Raw records older than this are gone from Raw, and A1 has written them.
+    /// Raw records older than this are gone from Raw, and A1 has written them. Before anything
+    /// is recorded nothing is gone.
     public func rawCutoff(now: Int) -> Int {
-        min(now - rawSeconds, (next.first.flatMap { $0 } ?? Int.min) - 1)
+        guard let a1 = next.first ?? nil else { return .min }
+        return min(now - rawSeconds, a1 - 1)
     }
 
     private mutating func seen(_ at: Int) { newest = max(newest ?? at, at) }

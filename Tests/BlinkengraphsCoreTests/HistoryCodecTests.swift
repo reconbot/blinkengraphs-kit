@@ -98,3 +98,14 @@ private func history() -> History {
     next.resume(at: Double(t0) + 400)
     #expect(next.history.pauses.last == Pause(begin: Double(t0) + 61, end: Double(t0) + 402))
 }
+
+@Test func aFirstLaunchRestoresNothingWithoutTrapping() throws {
+    // As Monitor.load() does with no files on disk: Int.min − 1 used to trap here.
+    var m = Measurements(defaults: try Defaults.decode(Spec.file("defaults.json")), settle: 2)
+    var h = History(defaults: try Defaults.decode(Spec.file("defaults.json")))
+    h.replay([])
+    m.restore(h, launch: Double(t0))
+    m.advance(now: Double(t0))
+    #expect(m.history.rawCutoff(now: t0) == .min)
+    #expect(m.history.archiveRecords.isEmpty)
+}
